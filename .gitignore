@@ -1,0 +1,9 @@
+backend/venv/
+backend/.env
+backend/scans/*
+backend/uploads/*
+!backend/scans/.gitkeep
+!backend/uploads/.gitkeep
+frontend/node_modules/
+frontend/dist/
+.DS_Store
