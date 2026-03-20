@@ -130,3 +130,9 @@ async def download_scan(filename: str):
     if not path.exists():
         raise HTTPException(404, "File not found")
     return FileResponse(path, media_type="application/json", filename=filename)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
