@@ -38,6 +38,11 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 uploads: dict[str, dict] = {}
 
 
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
