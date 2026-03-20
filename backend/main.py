@@ -5,6 +5,7 @@ import shutil
 import traceback
 import uuid
 from pathlib import Path
+from typing import List, Dict, Optional
 
 import anthropic
 from dotenv import load_dotenv
@@ -35,7 +36,7 @@ UPLOADS_DIR = Path(__file__).parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
 # In-memory store: upload_id -> {path, filename, classifications}
-uploads: dict[str, dict] = {}
+uploads: Dict[str, Dict] = {}
 
 
 @app.get("/")
@@ -78,7 +79,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 class ExtractRequest(BaseModel):
     upload_id: str
-    page_selections: list[dict]
+    page_selections: List[Dict]
 
 
 @app.post("/extract")
@@ -121,6 +122,59 @@ async def save_scan(req: SaveRequest):
     return {
         "saved_path": out_path,
         "filename": Path(out_path).name,
+    }
+
+
+@app.get("/default-prompt")
+def get_default_prompt():
+    return {
+        "prompt": scanner.DEFAULT_EXTRACTION_PROMPT,
+        "fields": list(scanner.EXTRACTION_FIELDS.keys()),
+    }
+
+
+class ScanWithPromptRequest(BaseModel):
+    upload_id: str
+    prompt_text: str
+    page_selections: Optional[List[Dict]] = None
+
+
+@app.post("/scan-with-prompt")
+async def scan_with_prompt(req: ScanWithPromptRequest):
+    if req.upload_id not in uploads:
+        raise HTTPException(404, "Upload not found")
+
+    info = uploads[req.upload_id]
+
+    # Use provided page_selections or default to all priority pages
+    if req.page_selections:
+        selections = req.page_selections
+    else:
+        selections = [
+            {"page": c["page"], "label": c["label"]}
+            for c in info["classifications"]
+            if c.get("is_priority")
+        ]
+
+    if not selections:
+        raise HTTPException(400, "No priority pages found. Label at least one page as framing_plan, roof_plan, elevation, or floor_plan.")
+
+    try:
+        result = scanner.extract_fields(
+            info["path"], info["filename"], selections,
+            prompt_text=req.prompt_text,
+        )
+    except anthropic.APIStatusError as e:
+        logger.error("Anthropic API error: %s", e.message)
+        raise HTTPException(e.status_code, f"Anthropic API error: {e.message}")
+    except Exception as e:
+        logger.error("Extraction failed: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, f"Extraction failed: {str(e)}")
+
+    return {
+        "upload_id": req.upload_id,
+        "filename": info["filename"],
+        "fields": result,
     }
 
 

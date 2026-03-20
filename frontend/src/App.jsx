@@ -1,84 +1,53 @@
-import { useState } from "react";
-import UploadZone from "./components/UploadZone";
-import PageClassification from "./components/PageClassification";
-import ExtractionReview from "./components/ExtractionReview";
-
-const STEPS = ["Upload", "Classify Pages", "Review & Save"];
+import { useState, useEffect } from "react";
+import api from "./api";
+import ScanSetup from "./components/ScanSetup";
+import ScanOutput from "./components/ScanOutput";
 
 export default function App() {
-  const [step, setStep] = useState(0);
   const [uploadResult, setUploadResult] = useState(null);
+  const [defaultPrompt, setDefaultPrompt] = useState("");
+  const [fields, setFields] = useState([]);
   const [extractionResult, setExtractionResult] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState("");
+
+  useEffect(() => {
+    api.get("/default-prompt").then(({ data }) => {
+      setDefaultPrompt(data.prompt);
+      setFields(data.fields);
+    });
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <h1 className="text-xl font-bold text-gray-900">Quick Bid Scanner</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Upload construction plans, classify pages, extract bid data
-        </p>
+    <div className="h-screen flex flex-col">
+      <header className="bg-white border-b border-gray-200 px-6 py-3 shrink-0">
+        <h1 className="text-lg font-bold text-gray-900">Quick Bid Scanner</h1>
       </header>
 
-      {/* Step indicator */}
-      <div className="max-w-5xl mx-auto px-6 pt-6">
-        <nav className="flex items-center gap-2 mb-8">
-          {STEPS.map((label, i) => (
-            <div key={label} className="flex items-center gap-2">
-              <div
-                className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
-                  i === step
-                    ? "bg-blue-600 text-white"
-                    : i < step
-                      ? "bg-green-500 text-white"
-                      : "bg-gray-200 text-gray-500"
-                }`}
-              >
-                {i < step ? "✓" : i + 1}
-              </div>
-              <span
-                className={`text-sm ${i === step ? "font-semibold text-gray-900" : "text-gray-500"}`}
-              >
-                {label}
-              </span>
-              {i < STEPS.length - 1 && (
-                <div className="w-12 h-px bg-gray-300 mx-1" />
-              )}
-            </div>
-          ))}
-        </nav>
-      </div>
+      <div className="flex flex-1 min-h-0">
+        {/* Left column */}
+        <div className="w-1/2 border-r border-gray-200 flex flex-col min-h-0">
+          <ScanSetup
+            uploadResult={uploadResult}
+            setUploadResult={setUploadResult}
+            defaultPrompt={defaultPrompt}
+            fields={fields}
+            scanning={scanning}
+            setScanning={setScanning}
+            scanStatus={scanStatus}
+            setScanStatus={setScanStatus}
+            onResult={setExtractionResult}
+          />
+        </div>
 
-      <main className="max-w-5xl mx-auto px-6 pb-12">
-        {step === 0 && (
-          <UploadZone
-            onComplete={(result) => {
-              setUploadResult(result);
-              setStep(1);
-            }}
-          />
-        )}
-        {step === 1 && uploadResult && (
-          <PageClassification
-            data={uploadResult}
-            onBack={() => setStep(0)}
-            onComplete={(result) => {
-              setExtractionResult(result);
-              setStep(2);
-            }}
-          />
-        )}
-        {step === 2 && extractionResult && (
-          <ExtractionReview
+        {/* Right column */}
+        <div className="w-1/2 flex flex-col min-h-0">
+          <ScanOutput
             data={extractionResult}
-            onBack={() => setStep(1)}
-            onStartOver={() => {
-              setStep(0);
-              setUploadResult(null);
-              setExtractionResult(null);
-            }}
+            uploadId={uploadResult?.upload_id}
           />
-        )}
-      </main>
+        </div>
+      </div>
     </div>
   );
 }

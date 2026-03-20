@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import anthropic
 import base64
 import io
@@ -136,32 +138,37 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
     }
 
 
-def extract_fields(pdf_path: str, filename: str, page_selections: list[dict]) -> dict:
+DEFAULT_EXTRACTION_PROMPT = (
+    "I'm sending you high-resolution construction plan pages. "
+    "Extract the following fields from these pages. For each field, provide a value, "
+    "a confidence level, a reasoning explanation, and the source page.\n\n"
+    "Confidence levels:\n"
+    "- \"extracted\": value was directly read from the plan\n"
+    "- \"inferred\": value was reasoned from context\n"
+    "- \"not_found\": value could not be determined\n\n"
+    "For each field:\n"
+    "- \"reasoning\": A 1-2 sentence plain English explanation of what you saw and why you assigned that value. "
+    "Example: \"Found '1,135 sq ft' labeled as 'Total Living Area' in the building area schedule on the title sheet.\"\n"
+    "- \"source_page\": The page number and label where the data was found, e.g. \"Page 1 (cover)\" or \"Page 3 (framing_plan)\". "
+    "If inferred, explain which pages were used. If not found, explain what was looked for and where.\n\n"
+    "Return ONLY valid JSON matching this exact structure:\n"
+    f"{json.dumps(EXTRACTION_FIELDS, indent=2)}\n\n"
+    "For roof_pitch and notes, the value should be an array. "
+    "For all other fields, the value should be a string or number or null."
+)
+
+
+def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], prompt_text: str | None = None) -> dict:
     page_numbers = [p["page"] for p in page_selections]
     labels = {p["page"]: p["label"] for p in page_selections}
     hires = pdf_to_hires_pages(pdf_path, page_numbers)
 
+    prompt = prompt_text if prompt_text else DEFAULT_EXTRACTION_PROMPT
+
     content = []
     content.append({
         "type": "text",
-        "text": (
-            "I'm sending you high-resolution construction plan pages. "
-            "Extract the following fields from these pages. For each field, provide a value, "
-            "a confidence level, a reasoning explanation, and the source page.\n\n"
-            "Confidence levels:\n"
-            "- \"extracted\": value was directly read from the plan\n"
-            "- \"inferred\": value was reasoned from context\n"
-            "- \"not_found\": value could not be determined\n\n"
-            "For each field:\n"
-            "- \"reasoning\": A 1-2 sentence plain English explanation of what you saw and why you assigned that value. "
-            "Example: \"Found '1,135 sq ft' labeled as 'Total Living Area' in the building area schedule on the title sheet.\"\n"
-            "- \"source_page\": The page number and label where the data was found, e.g. \"Page 1 (cover)\" or \"Page 3 (framing_plan)\". "
-            "If inferred, explain which pages were used. If not found, explain what was looked for and where.\n\n"
-            "Return ONLY valid JSON matching this exact structure:\n"
-            f"{json.dumps(EXTRACTION_FIELDS, indent=2)}\n\n"
-            "For roof_pitch and notes, the value should be an array. "
-            "For all other fields, the value should be a string or number or null."
-        ),
+        "text": prompt,
     })
 
     for i, img in enumerate(hires):
