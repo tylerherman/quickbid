@@ -287,6 +287,16 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
     return {"job_id": job_id, "status": "pending"}
 
 
+@app.get("/debug/last-raw")
+async def debug_last_raw():
+    scans_dir = Path(__file__).parent / "scans"
+    files = sorted(scans_dir.glob("*_pass2_extract_raw.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if not files:
+        raise HTTPException(404, "No raw extraction files found")
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(files[0].read_text(encoding="utf-8"))
+
+
 @app.get("/scan-status/{job_id}")
 async def get_scan_status(job_id: str):
     job = _read_job(job_id)
