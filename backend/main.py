@@ -24,12 +24,17 @@ load_dotenv()
 
 app = FastAPI(title="Quick Bid Scanner")
 
-allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173")
+allowed_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,https://frontend-hbi0.onrender.com",
+)
 origins = [o.strip() for o in allowed_origins.split(",") if o.strip()]
+logger.info("CORS allowed origins: %s", origins)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
