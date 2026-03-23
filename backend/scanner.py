@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import anthropic
 import base64
+import gc
 import io
 import json
 import logging
@@ -11,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from pdf2image import convert_from_path
 from PIL import Image
+
+import psutil
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -46,6 +49,11 @@ EXTRACTION_FIELDS = {
 }
 
 
+def _mem_mb() -> float:
+    """Current process RSS in MB."""
+    return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
+
+
 def _image_to_base64(img: Image.Image, max_width: int = 800, label: str = "") -> str:
     orig_w, orig_h = img.width, img.height
     if img.width > max_width:
@@ -59,6 +67,15 @@ def _image_to_base64(img: Image.Image, max_width: int = 800, label: str = "") ->
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
+def _convert_single_page(pdf_path: str, page_num: int, dpi: int) -> Image.Image:
+    """Convert a single PDF page to PIL Image."""
+    pages = convert_from_path(
+        pdf_path, dpi=dpi, fmt="jpeg",
+        first_page=page_num, last_page=page_num,
+    )
+    return pages[0] if pages else None
+
+
 def _save_debug_log(filename: str, pass_name: str, response_text: str):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     stem = Path(filename).stem
@@ -67,34 +84,26 @@ def _save_debug_log(filename: str, pass_name: str, response_text: str):
     return str(log_path)
 
 
-def pdf_to_thumbnails(pdf_path: str) -> list[Image.Image]:
-    return convert_from_path(pdf_path, dpi=72, fmt="jpeg")
-
-
-def pdf_to_hires_pages(pdf_path: str, page_numbers: list[int]) -> list[Image.Image]:
-    images = []
-    for pn in page_numbers:
-        pages = convert_from_path(
-            pdf_path, dpi=150, fmt="jpeg",
-            first_page=pn, last_page=pn,
-        )
-        if pages:
-            images.append(pages[0])
-    return images
+def _get_page_count(pdf_path: str) -> int:
+    """Get PDF page count using a minimal render."""
+    from pdf2image.pdf2image import pdfinfo_from_path
+    info = pdfinfo_from_path(pdf_path)
+    return info.get("Pages", 0)
 
 
 def classify_pages(pdf_path: str, filename: str) -> dict:
     t0 = time.time()
+    mem_start = _mem_mb()
 
-    thumbnails = pdf_to_thumbnails(pdf_path)
-    t_render = time.time()
-    logger.info("classify_pages: %d pages, PDF render (72dpi) took %.1fs", len(thumbnails), t_render - t0)
+    total_pages = _get_page_count(pdf_path)
+    logger.info("classify_pages: %d pages, starting (RAM: %.0fMB)", total_pages, mem_start)
 
+    # Build Claude content — render one page at a time at 72 DPI
     content = []
     content.append({
         "type": "text",
         "text": (
-            f"I'm sending you {len(thumbnails)} pages from a construction plan PDF.\n"
+            f"I'm sending you {total_pages} pages from a construction plan PDF.\n"
             "For each page, classify it as exactly one of: "
             f"{', '.join(PAGE_TYPES)}.\n\n"
             "Return ONLY valid JSON — an array of objects with 'page' (1-indexed) and 'label'.\n"
@@ -102,21 +111,32 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
         ),
     })
 
-    for i, thumb in enumerate(thumbnails):
-        b64 = _image_to_base64(thumb, max_width=300, label=f"pass1_claude_p{i+1}")
-        content.append({
-            "type": "text",
-            "text": f"--- Page {i + 1} ---",
-        })
+    thumb_data = []
+    for pn in range(1, total_pages + 1):
+        img = _convert_single_page(pdf_path, pn, dpi=72)
+        if not img:
+            continue
+
+        # Base64 for Claude (small)
+        b64_claude = _image_to_base64(img, max_width=300, label=f"pass1_claude_p{pn}")
+        content.append({"type": "text", "text": f"--- Page {pn} ---"})
         content.append({
             "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": b64,
-            },
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_claude},
         })
 
+        # Base64 for frontend thumbnail strip (same size)
+        b64_thumb = _image_to_base64(img, max_width=300)
+        thumb_data.append(b64_thumb)
+
+        # Free the PIL image
+        del img
+        gc.collect()
+
+    t_render = time.time()
+    logger.info("classify_pages: 72dpi render+encode took %.1fs (RAM: %.0fMB)", t_render - t0, _mem_mb())
+
+    # Call Claude for classification
     t_api_start = time.time()
     client = anthropic.Anthropic()
     resp = client.messages.create(
@@ -130,39 +150,44 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
     raw = resp.content[0].text
     _save_debug_log(filename, "pass1_classify", raw)
 
-    # Parse JSON from response — handle markdown fences
+    # Parse JSON from response
     text = raw.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        lines = lines[1:]  # drop opening fence
+        lines = lines[1:]
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines)
 
     pages = json.loads(text)
 
-    # Build thumbnail base64 list for frontend (small, for strip)
-    thumb_data = [_image_to_base64(t, max_width=300) for t in thumbnails]
-
-    # Build higher-res images for lightbox at 150 DPI for readability
+    # Build lightbox images — render one page at a time at 150 DPI
     t_hires = time.time()
-    hires_pages = convert_from_path(pdf_path, dpi=150, fmt="jpeg")
-    logger.info("classify_pages: lightbox render (150dpi) took %.1fs", time.time() - t_hires)
-    full_data = [_image_to_base64(p, max_width=1200, label=f"lightbox_p{i+1}") for i, p in enumerate(hires_pages)]
+    full_data = []
+    for pn in range(1, total_pages + 1):
+        img = _convert_single_page(pdf_path, pn, dpi=150)
+        if not img:
+            full_data.append("")
+            continue
+        b64 = _image_to_base64(img, max_width=1200, label=f"lightbox_p{pn}")
+        full_data.append(b64)
+        del img
+        gc.collect()
+
+    logger.info("classify_pages: lightbox render took %.1fs (RAM: %.0fMB)", time.time() - t_hires, _mem_mb())
 
     priority_order = {t: i for i, t in enumerate(PRIORITY_TYPES)}
-
     for p in pages:
         p["is_priority"] = p["label"] in PRIORITY_TYPES
         p["priority_rank"] = priority_order.get(p["label"], 999)
-
     pages.sort(key=lambda p: p["priority_rank"])
 
-    t_total = time.time()
-    logger.info("classify_pages: total %.1fs for %d pages", t_total - t0, len(thumbnails))
+    mem_end = _mem_mb()
+    logger.info("classify_pages: total %.1fs, %d pages, RAM: %.0fMB (peak delta: +%.0fMB)",
+                time.time() - t0, total_pages, mem_end, mem_end - mem_start)
 
     return {
-        "total_pages": len(thumbnails),
+        "total_pages": total_pages,
         "classifications": pages,
         "thumbnails": thumb_data,
         "full_images": full_data,
@@ -206,36 +231,34 @@ DEFAULT_EXTRACTION_PROMPT = (
 
 def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], prompt_text: str | None = None) -> dict:
     t0 = time.time()
+    mem_start = _mem_mb()
     page_numbers = [p["page"] for p in page_selections]
     labels = {p["page"]: p["label"] for p in page_selections}
-    hires = pdf_to_hires_pages(pdf_path, page_numbers)
-    t_render = time.time()
-    logger.info("extract_fields: %d pages, hi-res render (150dpi) took %.1fs", len(page_numbers), t_render - t0)
+
+    logger.info("extract_fields: %d pages, starting (RAM: %.0fMB)", len(page_numbers), mem_start)
 
     prompt = prompt_text if prompt_text else DEFAULT_EXTRACTION_PROMPT
 
     content = []
-    content.append({
-        "type": "text",
-        "text": prompt,
-    })
+    content.append({"type": "text", "text": prompt})
 
-    for i, img in enumerate(hires):
-        pn = page_numbers[i]
+    # Render and encode one page at a time at 150 DPI
+    for pn in page_numbers:
         label = labels.get(pn, "unknown")
+        img = _convert_single_page(pdf_path, pn, dpi=150)
+        if not img:
+            continue
         b64 = _image_to_base64(img, max_width=2000, label=f"pass2_claude_p{pn}")
-        content.append({
-            "type": "text",
-            "text": f"--- Page {pn} ({label}) ---",
-        })
+        content.append({"type": "text", "text": f"--- Page {pn} ({label}) ---"})
         content.append({
             "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": b64,
-            },
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
         })
+        del img
+        gc.collect()
+
+    t_render = time.time()
+    logger.info("extract_fields: 150dpi render+encode took %.1fs (RAM: %.0fMB)", t_render - t0, _mem_mb())
 
     t_api_start = time.time()
     client = anthropic.Anthropic()
@@ -268,7 +291,9 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
         else:
             result[key] = default
 
-    logger.info("extract_fields: total %.1fs for %d pages", time.time() - t0, len(page_numbers))
+    mem_end = _mem_mb()
+    logger.info("extract_fields: total %.1fs, %d pages, RAM: %.0fMB (peak delta: +%.0fMB)",
+                time.time() - t0, len(page_numbers), mem_end, mem_end - mem_start)
     return result
 
 

@@ -42,11 +42,26 @@ app.add_middleware(
 UPLOADS_DIR = Path(__file__).parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+JOBS_DIR = Path(__file__).parent / "scans" / "jobs"
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
 # In-memory store: upload_id -> {path, filename, classifications}
 uploads: Dict[str, Dict] = {}
 
-# In-memory job queue for async scans
-scan_jobs: Dict[str, Dict] = {}
+
+def _write_job(job_id: str, data: dict):
+    path = JOBS_DIR / f"{job_id}.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _read_job(job_id: str) -> Optional[dict]:
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 @app.get("/")
@@ -56,7 +71,7 @@ def root():
 
 def _run_classification(job_id: str, upload_id: str, pdf_path: str, filename: str):
     """Background worker for page classification (Pass 1)."""
-    scan_jobs[job_id]["status"] = "classifying"
+    _write_job(job_id, {"status": "classifying", "result": None, "error": None})
     try:
         result = scanner.classify_pages(pdf_path, filename)
         uploads[upload_id] = {
@@ -64,20 +79,21 @@ def _run_classification(job_id: str, upload_id: str, pdf_path: str, filename: st
             "filename": filename,
             "classifications": result["classifications"],
         }
-        scan_jobs[job_id]["status"] = "complete"
-        scan_jobs[job_id]["result"] = {
-            "upload_id": upload_id,
-            "filename": filename,
-            **result,
-        }
+        _write_job(job_id, {
+            "status": "complete",
+            "result": {
+                "upload_id": upload_id,
+                "filename": filename,
+                **result,
+            },
+            "error": None,
+        })
     except anthropic.APIStatusError as e:
         logger.error("Anthropic API error: %s", e.message)
-        scan_jobs[job_id]["status"] = "error"
-        scan_jobs[job_id]["error"] = f"Anthropic API error: {e.message}"
+        _write_job(job_id, {"status": "error", "result": None, "error": f"Anthropic API error: {e.message}"})
     except Exception as e:
         logger.error("Classification failed: %s\n%s", e, traceback.format_exc())
-        scan_jobs[job_id]["status"] = "error"
-        scan_jobs[job_id]["error"] = f"Classification failed: {str(e)}"
+        _write_job(job_id, {"status": "error", "result": None, "error": f"Classification failed: {str(e)}"})
 
 
 @app.post("/upload")
@@ -92,11 +108,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
 
     job_id = uuid.uuid4().hex[:12]
-    scan_jobs[job_id] = {
-        "status": "pending",
-        "result": None,
-        "error": None,
-    }
+    _write_job(job_id, {"status": "pending", "result": None, "error": None})
 
     thread = threading.Thread(
         target=_run_classification,
@@ -176,26 +188,28 @@ class ScanWithPromptRequest(BaseModel):
 
 def _run_extraction(job_id: str, upload_id: str, info: dict, selections: list, prompt_text: str):
     """Background worker for extraction."""
-    scan_jobs[job_id]["status"] = "processing"
+    _write_job(job_id, {"status": "processing", "result": None, "error": None})
     try:
         result = scanner.extract_fields(
             info["path"], info["filename"], selections,
             prompt_text=prompt_text,
         )
-        scan_jobs[job_id]["status"] = "complete"
-        scan_jobs[job_id]["result"] = {
-            "upload_id": upload_id,
-            "filename": info["filename"],
-            "fields": result,
-        }
+        _write_job(job_id, {
+            "status": "complete",
+            "result": {
+                "upload_id": upload_id,
+                "filename": info["filename"],
+                "fields": result,
+                "pages_scanned": selections,
+            },
+            "error": None,
+        })
     except anthropic.APIStatusError as e:
         logger.error("Anthropic API error: %s", e.message)
-        scan_jobs[job_id]["status"] = "error"
-        scan_jobs[job_id]["error"] = f"Anthropic API error: {e.message}"
+        _write_job(job_id, {"status": "error", "result": None, "error": f"Anthropic API error: {e.message}"})
     except Exception as e:
         logger.error("Extraction failed: %s\n%s", e, traceback.format_exc())
-        scan_jobs[job_id]["status"] = "error"
-        scan_jobs[job_id]["error"] = f"Extraction failed: {str(e)}"
+        _write_job(job_id, {"status": "error", "result": None, "error": f"Extraction failed: {str(e)}"})
 
 
 @app.post("/scan-with-prompt")
@@ -205,25 +219,40 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
 
     info = uploads[req.upload_id]
 
-    # Use provided page_selections or default to all priority pages
+    MAX_EXTRACT_PAGES = 10
+
+    # Use provided page_selections or build from classifications
     if req.page_selections:
         selections = req.page_selections
     else:
-        selections = [
+        all_classifications = info["classifications"]
+        total_pages = len(all_classifications)
+
+        # Priority pages first, then fill remaining slots with others
+        priority = [
             {"page": c["page"], "label": c["label"]}
-            for c in info["classifications"]
+            for c in all_classifications
             if c.get("is_priority")
         ]
+        others = [
+            {"page": c["page"], "label": c["label"]}
+            for c in all_classifications
+            if not c.get("is_priority")
+        ]
+
+        selections = priority[:MAX_EXTRACT_PAGES]
+        remaining_slots = MAX_EXTRACT_PAGES - len(selections)
+        if remaining_slots > 0:
+            selections.extend(others[:remaining_slots])
+
+        logger.info("Extracting from %d of %d pages (priority capped at %d)",
+                     len(selections), total_pages, MAX_EXTRACT_PAGES)
 
     if not selections:
         raise HTTPException(400, "No priority pages found. Label at least one page as framing_plan, roof_plan, elevation, or floor_plan.")
 
     job_id = uuid.uuid4().hex[:12]
-    scan_jobs[job_id] = {
-        "status": "pending",
-        "result": None,
-        "error": None,
-    }
+    _write_job(job_id, {"status": "pending", "result": None, "error": None})
 
     thread = threading.Thread(
         target=_run_extraction,
@@ -237,13 +266,13 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
 
 @app.get("/scan-status/{job_id}")
 async def get_scan_status(job_id: str):
-    if job_id not in scan_jobs:
+    job = _read_job(job_id)
+    if job is None:
         raise HTTPException(404, "Job not found")
-    job = scan_jobs[job_id]
     return {
         "status": job["status"],
-        "result": job["result"],
-        "error": job["error"],
+        "result": job.get("result"),
+        "error": job.get("error"),
     }
 
 
