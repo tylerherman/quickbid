@@ -264,7 +264,7 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     client = anthropic.Anthropic()
     resp = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{"role": "user", "content": content}],
     )
     t_api_end = time.time()
