@@ -29,6 +29,7 @@ PRIORITY_TYPES = ["framing_plan", "roof_plan", "elevation", "floor_plan"]
 
 EXTRACTION_FIELDS = {
     "square_footage": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    "building_type": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "building_dimensions": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "stories": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "roof_system_type": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
@@ -106,6 +107,10 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
             f"I'm sending you {total_pages} pages from a construction plan PDF.\n"
             "For each page, classify it as exactly one of: "
             f"{', '.join(PAGE_TYPES)}.\n\n"
+            "Important classification rules:\n"
+            "- If a page contains a floor plan view of any kind — even if it also contains other views, schedules, or details — label it floor_plan. Do not label it detail if a floor plan is present.\n"
+            "- If a page contains a roof framing plan or truss layout — even alongside other content — label it framing_plan.\n"
+            "- Only label a page detail if it contains exclusively detail views, schedules, or notes with no plan views.\n\n"
             "Return ONLY valid JSON — an array of objects with 'page' (1-indexed) and 'label'.\n"
             "Example: [{\"page\": 1, \"label\": \"cover\"}, {\"page\": 2, \"label\": \"floor_plan\"}]"
         ),
@@ -208,6 +213,12 @@ DEFAULT_EXTRACTION_PROMPT = (
     "- \"source_page\": The page number and label where the data was found, e.g. \"Page 1 (cover)\" or \"Page 3 (framing_plan)\". "
     "If inferred, explain which pages were used. If not found, explain what was looked for and where.\n\n"
     "Field-specific guidance:\n"
+    "- For building_type: Classify the overall building type as one of: single_family, garage, barn, shop, duplex, "
+    "multi_family, commercial, addition, or unknown. Look at the cover page, title block, and overall plan layout. "
+    "If it is clearly a detached garage or accessory structure with no living space, use garage. "
+    "If it is a barn or agricultural building, use barn. Use the overall purpose and layout to determine the type. "
+    "For room fields like bedrooms, bathrooms, and kitchens — if the building type is garage, barn, shop, or similar "
+    "non-residential structure, set count to 0 and confidence to extracted rather than not_found.\n"
     "- For square_footage: Look for a labeled area schedule, title block, or total square footage label on floor plan and cover pages. "
     "If no total is explicitly labeled, calculate it by adding up all individual room and area dimensions visible on the floor plan pages. "
     "List each room or area with its square footage in the reasoning field and show the sum. Sum all floors if multi-story. "
@@ -221,13 +232,13 @@ DEFAULT_EXTRACTION_PROMPT = (
     "Do not return not_found if ridge lines are visible — always attempt a visual count.\n"
     "- For rooms: The 'rooms' object contains bedrooms, bathrooms, kitchens, and garages. "
     "For each room type, count all instances across all floors. "
-    "For total_sqft, sum the square footage of all rooms of that type if dimensions are labeled. "
-    "If only some rooms have dimensions, sum what is available and note which rooms are missing in reasoning. "
-    "If room labels are visible but no dimensions are given, set count from the labels and total_sqft to null, "
-    "with reasoning explaining that dimensions were not labeled. "
-    "Confidence: 'extracted' if both count and sqft come directly from labeled dimensions, "
-    "'inferred' if count is visible but sqft is calculated or estimated from dimensions, "
-    "'not_found' if that room type is not visible at all.\n\n"
+    "For total_sqft, first look for a labeled total. If no total is labeled, calculate it by measuring or reading "
+    "the individual room dimensions visible on the floor plan and multiplying length x width for each room of that type, "
+    "then summing them. Show your math in the reasoning field — list each room with its dimensions and square footage. "
+    "If only some rooms have readable dimensions, sum what is available and note which are missing. "
+    "If room labels are visible but no dimensions are legible at all, set total_sqft to null and explain in reasoning. "
+    "Confidence: extracted if total comes directly from a label, inferred if calculated from dimensions, "
+    "unclear if dimensions appear present but were not legible, not_found if that room type is not visible at all.\n\n"
     "Return ONLY valid JSON matching this exact structure:\n"
     f"{json.dumps(EXTRACTION_FIELDS, indent=2)}\n\n"
     "For roof_pitch and notes, the value should be an array. "

@@ -3,6 +3,7 @@ import api from "../api";
 import ConfidenceBadge from "./ConfidenceBadge";
 
 const FIELD_LABELS = {
+  building_type: "Building Type",
   square_footage: "Square Footage",
   building_dimensions: "Building Dimensions",
   stories: "Stories",
