@@ -107,19 +107,50 @@ export default function ScanSetup({
   const handleRunScan = async () => {
     if (!uploadResult) return;
     setScanning(true);
-    setScanStatus("Extracting fields...");
+    setScanStatus("Starting extraction...");
     setError(null);
     try {
       const { data } = await api.post("/scan-with-prompt", {
         upload_id: uploadResult.upload_id,
         prompt_text: promptText,
       });
-      onResult(data);
+      const jobId = data.job_id;
+      setScanStatus("Extracting fields...");
+
+      // Poll for completion
+      const poll = async () => {
+        while (true) {
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const { data: status } = await api.get(`/scan-status/${jobId}`);
+            if (status.status === "complete") {
+              onResult(status.result);
+              setScanning(false);
+              setScanStatus("");
+              return;
+            }
+            if (status.status === "error") {
+              setError(status.error || "Extraction failed");
+              setScanning(false);
+              setScanStatus("");
+              return;
+            }
+            if (status.status === "processing") {
+              setScanStatus("Extracting fields...");
+            }
+          } catch (err) {
+            setError("Lost connection to scan job");
+            setScanning(false);
+            setScanStatus("");
+            return;
+          }
+        }
+      };
+      await poll();
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || "Scan failed";
       console.error("Scan error:", err.response?.data || err);
       setError(msg);
-    } finally {
       setScanning(false);
       setScanStatus("");
     }

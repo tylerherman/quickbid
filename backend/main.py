@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 import traceback
 import uuid
 from pathlib import Path
@@ -38,6 +39,9 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 
 # In-memory store: upload_id -> {path, filename, classifications}
 uploads: Dict[str, Dict] = {}
+
+# In-memory job queue for async scans
+scan_jobs: Dict[str, Dict] = {}
 
 
 @app.get("/")
@@ -140,6 +144,30 @@ class ScanWithPromptRequest(BaseModel):
     page_selections: Optional[List[Dict]] = None
 
 
+def _run_extraction(job_id: str, upload_id: str, info: dict, selections: list, prompt_text: str):
+    """Background worker for extraction."""
+    scan_jobs[job_id]["status"] = "processing"
+    try:
+        result = scanner.extract_fields(
+            info["path"], info["filename"], selections,
+            prompt_text=prompt_text,
+        )
+        scan_jobs[job_id]["status"] = "complete"
+        scan_jobs[job_id]["result"] = {
+            "upload_id": upload_id,
+            "filename": info["filename"],
+            "fields": result,
+        }
+    except anthropic.APIStatusError as e:
+        logger.error("Anthropic API error: %s", e.message)
+        scan_jobs[job_id]["status"] = "error"
+        scan_jobs[job_id]["error"] = f"Anthropic API error: {e.message}"
+    except Exception as e:
+        logger.error("Extraction failed: %s\n%s", e, traceback.format_exc())
+        scan_jobs[job_id]["status"] = "error"
+        scan_jobs[job_id]["error"] = f"Extraction failed: {str(e)}"
+
+
 @app.post("/scan-with-prompt")
 async def scan_with_prompt(req: ScanWithPromptRequest):
     if req.upload_id not in uploads:
@@ -160,22 +188,32 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
     if not selections:
         raise HTTPException(400, "No priority pages found. Label at least one page as framing_plan, roof_plan, elevation, or floor_plan.")
 
-    try:
-        result = scanner.extract_fields(
-            info["path"], info["filename"], selections,
-            prompt_text=req.prompt_text,
-        )
-    except anthropic.APIStatusError as e:
-        logger.error("Anthropic API error: %s", e.message)
-        raise HTTPException(e.status_code, f"Anthropic API error: {e.message}")
-    except Exception as e:
-        logger.error("Extraction failed: %s\n%s", e, traceback.format_exc())
-        raise HTTPException(500, f"Extraction failed: {str(e)}")
+    job_id = uuid.uuid4().hex[:12]
+    scan_jobs[job_id] = {
+        "status": "pending",
+        "result": None,
+        "error": None,
+    }
 
+    thread = threading.Thread(
+        target=_run_extraction,
+        args=(job_id, req.upload_id, info, selections, req.prompt_text),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/scan-status/{job_id}")
+async def get_scan_status(job_id: str):
+    if job_id not in scan_jobs:
+        raise HTTPException(404, "Job not found")
+    job = scan_jobs[job_id]
     return {
-        "upload_id": req.upload_id,
-        "filename": info["filename"],
-        "fields": result,
+        "status": job["status"],
+        "result": job["result"],
+        "error": job["error"],
     }
 
 

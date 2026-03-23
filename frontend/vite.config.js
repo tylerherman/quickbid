@@ -11,6 +11,7 @@ export default defineConfig({
       "/scans": "http://localhost:8000",
       "/default-prompt": "http://localhost:8000",
       "/scan-with-prompt": "http://localhost:8000",
+      "/scan-status": "http://localhost:8000",
     },
   },
 });
