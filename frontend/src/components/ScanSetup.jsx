@@ -88,12 +88,47 @@ export default function ScanSetup({
     }
     setUploading(true);
     setError(null);
-    setScanStatus("Classifying pages...");
+    setScanStatus("Uploading PDF...");
     try {
       const form = new FormData();
       form.append("file", file);
-      const { data } = await api.post("/upload", form);
-      setUploadResult(data);
+      const { data } = await api.post("/upload", form, {
+        timeout: 300000, // 5 min for large file upload transfer
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const jobId = data.job_id;
+      setScanStatus("Classifying pages...");
+
+      // Poll for classification completion
+      let pollCount = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 3000));
+        pollCount++;
+        try {
+          const { data: status } = await api.get(`/scan-status/${jobId}`, {
+            timeout: 15000,
+          });
+          if (status.status === "complete") {
+            setUploadResult(status.result);
+            break;
+          }
+          if (status.status === "error") {
+            setError(status.error || "Classification failed");
+            break;
+          }
+          // Rotate status messages
+          if (pollCount < 5) {
+            setScanStatus("Classifying pages...");
+          } else if (pollCount < 15) {
+            setScanStatus("Extracting page details...");
+          } else {
+            setScanStatus("Almost done...");
+          }
+        } catch {
+          setError("Lost connection to classification job");
+          break;
+        }
+      }
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || "Upload failed";
       console.error("Upload error:", err.response?.data || err);
@@ -113,16 +148,20 @@ export default function ScanSetup({
       const { data } = await api.post("/scan-with-prompt", {
         upload_id: uploadResult.upload_id,
         prompt_text: promptText,
-      });
+      }, { timeout: 30000 });
       const jobId = data.job_id;
       setScanStatus("Extracting fields...");
 
       // Poll for completion
+      let extractPollCount = 0;
       const poll = async () => {
         while (true) {
           await new Promise((r) => setTimeout(r, 3000));
+          extractPollCount++;
           try {
-            const { data: status } = await api.get(`/scan-status/${jobId}`);
+            const { data: status } = await api.get(`/scan-status/${jobId}`, {
+              timeout: 15000,
+            });
             if (status.status === "complete") {
               onResult(status.result);
               setScanning(false);
@@ -136,7 +175,11 @@ export default function ScanSetup({
               return;
             }
             if (status.status === "processing") {
-              setScanStatus("Extracting fields...");
+              if (extractPollCount < 10) {
+                setScanStatus("Extracting fields...");
+              } else {
+                setScanStatus("Almost done...");
+              }
             }
           } catch (err) {
             setError("Lost connection to scan job");

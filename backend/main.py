@@ -49,6 +49,32 @@ def root():
     return {"status": "ok"}
 
 
+def _run_classification(job_id: str, upload_id: str, pdf_path: str, filename: str):
+    """Background worker for page classification (Pass 1)."""
+    scan_jobs[job_id]["status"] = "classifying"
+    try:
+        result = scanner.classify_pages(pdf_path, filename)
+        uploads[upload_id] = {
+            "path": pdf_path,
+            "filename": filename,
+            "classifications": result["classifications"],
+        }
+        scan_jobs[job_id]["status"] = "complete"
+        scan_jobs[job_id]["result"] = {
+            "upload_id": upload_id,
+            "filename": filename,
+            **result,
+        }
+    except anthropic.APIStatusError as e:
+        logger.error("Anthropic API error: %s", e.message)
+        scan_jobs[job_id]["status"] = "error"
+        scan_jobs[job_id]["error"] = f"Anthropic API error: {e.message}"
+    except Exception as e:
+        logger.error("Classification failed: %s\n%s", e, traceback.format_exc())
+        scan_jobs[job_id]["status"] = "error"
+        scan_jobs[job_id]["error"] = f"Classification failed: {str(e)}"
+
+
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
@@ -60,25 +86,24 @@ async def upload_pdf(file: UploadFile = File(...)):
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    try:
-        result = scanner.classify_pages(str(save_path), file.filename)
-    except anthropic.APIStatusError as e:
-        logger.error("Anthropic API error: %s", e.message)
-        raise HTTPException(e.status_code, f"Anthropic API error: {e.message}")
-    except Exception as e:
-        logger.error("Classification failed: %s\n%s", e, traceback.format_exc())
-        raise HTTPException(500, f"Classification failed: {str(e)}")
-
-    uploads[upload_id] = {
-        "path": str(save_path),
-        "filename": file.filename,
-        "classifications": result["classifications"],
+    job_id = uuid.uuid4().hex[:12]
+    scan_jobs[job_id] = {
+        "status": "pending",
+        "result": None,
+        "error": None,
     }
 
+    thread = threading.Thread(
+        target=_run_classification,
+        args=(job_id, upload_id, str(save_path), file.filename),
+        daemon=True,
+    )
+    thread.start()
+
     return {
+        "job_id": job_id,
         "upload_id": upload_id,
-        "filename": file.filename,
-        **result,
+        "status": "pending",
     }
 
 

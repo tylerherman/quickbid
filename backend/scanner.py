@@ -4,11 +4,15 @@ import anthropic
 import base64
 import io
 import json
+import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from pdf2image import convert_from_path
 from PIL import Image
+
+logger = logging.getLogger("uvicorn.error")
 
 SCANS_DIR = Path(__file__).parent / "scans"
 SCANS_DIR.mkdir(exist_ok=True)
@@ -42,12 +46,16 @@ EXTRACTION_FIELDS = {
 }
 
 
-def _image_to_base64(img: Image.Image, max_width: int = 800) -> str:
+def _image_to_base64(img: Image.Image, max_width: int = 800, label: str = "") -> str:
+    orig_w, orig_h = img.width, img.height
     if img.width > max_width:
         ratio = max_width / img.width
         img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=75)
+    size_kb = len(buf.getvalue()) / 1024
+    if label:
+        logger.info("  %s: %dx%d -> %dx%d, %.0fKB jpeg", label, orig_w, orig_h, img.width, img.height, size_kb)
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
@@ -76,7 +84,11 @@ def pdf_to_hires_pages(pdf_path: str, page_numbers: list[int]) -> list[Image.Ima
 
 
 def classify_pages(pdf_path: str, filename: str) -> dict:
+    t0 = time.time()
+
     thumbnails = pdf_to_thumbnails(pdf_path)
+    t_render = time.time()
+    logger.info("classify_pages: %d pages, PDF render (72dpi) took %.1fs", len(thumbnails), t_render - t0)
 
     content = []
     content.append({
@@ -91,7 +103,7 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
     })
 
     for i, thumb in enumerate(thumbnails):
-        b64 = _image_to_base64(thumb)
+        b64 = _image_to_base64(thumb, max_width=300, label=f"pass1_claude_p{i+1}")
         content.append({
             "type": "text",
             "text": f"--- Page {i + 1} ---",
@@ -105,12 +117,15 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
             },
         })
 
+    t_api_start = time.time()
     client = anthropic.Anthropic()
     resp = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2048,
         messages=[{"role": "user", "content": content}],
     )
+    t_api_end = time.time()
+    logger.info("classify_pages: Claude API call took %.1fs", t_api_end - t_api_start)
 
     raw = resp.content[0].text
     _save_debug_log(filename, "pass1_classify", raw)
@@ -126,12 +141,14 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
 
     pages = json.loads(text)
 
-    # Build thumbnail base64 list for frontend
+    # Build thumbnail base64 list for frontend (small, for strip)
     thumb_data = [_image_to_base64(t, max_width=300) for t in thumbnails]
 
-    # Build higher-res images for lightbox viewing
+    # Build higher-res images for lightbox at 150 DPI for readability
+    t_hires = time.time()
     hires_pages = convert_from_path(pdf_path, dpi=150, fmt="jpeg")
-    full_data = [_image_to_base64(p, max_width=1200) for p in hires_pages]
+    logger.info("classify_pages: lightbox render (150dpi) took %.1fs", time.time() - t_hires)
+    full_data = [_image_to_base64(p, max_width=1200, label=f"lightbox_p{i+1}") for i, p in enumerate(hires_pages)]
 
     priority_order = {t: i for i, t in enumerate(PRIORITY_TYPES)}
 
@@ -140,6 +157,9 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
         p["priority_rank"] = priority_order.get(p["label"], 999)
 
     pages.sort(key=lambda p: p["priority_rank"])
+
+    t_total = time.time()
+    logger.info("classify_pages: total %.1fs for %d pages", t_total - t0, len(thumbnails))
 
     return {
         "total_pages": len(thumbnails),
@@ -185,9 +205,12 @@ DEFAULT_EXTRACTION_PROMPT = (
 
 
 def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], prompt_text: str | None = None) -> dict:
+    t0 = time.time()
     page_numbers = [p["page"] for p in page_selections]
     labels = {p["page"]: p["label"] for p in page_selections}
     hires = pdf_to_hires_pages(pdf_path, page_numbers)
+    t_render = time.time()
+    logger.info("extract_fields: %d pages, hi-res render (150dpi) took %.1fs", len(page_numbers), t_render - t0)
 
     prompt = prompt_text if prompt_text else DEFAULT_EXTRACTION_PROMPT
 
@@ -200,7 +223,7 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     for i, img in enumerate(hires):
         pn = page_numbers[i]
         label = labels.get(pn, "unknown")
-        b64 = _image_to_base64(img, max_width=2000)
+        b64 = _image_to_base64(img, max_width=2000, label=f"pass2_claude_p{pn}")
         content.append({
             "type": "text",
             "text": f"--- Page {pn} ({label}) ---",
@@ -214,12 +237,15 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
             },
         })
 
+    t_api_start = time.time()
     client = anthropic.Anthropic()
     resp = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=4096,
         messages=[{"role": "user", "content": content}],
     )
+    t_api_end = time.time()
+    logger.info("extract_fields: Claude API call took %.1fs", t_api_end - t_api_start)
 
     raw = resp.content[0].text
     _save_debug_log(filename, "pass2_extract", raw)
@@ -242,6 +268,7 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
         else:
             result[key] = default
 
+    logger.info("extract_fields: total %.1fs for %d pages", time.time() - t0, len(page_numbers))
     return result
 
 
