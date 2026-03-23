@@ -219,7 +219,7 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
 
     info = uploads[req.upload_id]
 
-    MAX_EXTRACT_PAGES = 12
+    MAX_EXTRACT_PAGES = 15
 
     # Use provided page_selections or build from classifications
     if req.page_selections:
@@ -230,13 +230,6 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
         all_classifications = info["classifications"]
         total_pages = len(all_classifications)
 
-        # Group priority pages by type
-        by_type = defaultdict(list)
-        for c in all_classifications:
-            if c.get("is_priority"):
-                by_type[c["label"]].append({"page": c["page"], "label": c["label"]})
-
-        # Take best pages per type — prioritize variety over volume
         TYPE_LIMITS = {
             "framing_plan": 3,
             "roof_plan": 2,
@@ -244,11 +237,34 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
             "floor_plan": 3,
         }
 
+        by_type = defaultdict(list)
+        for c in all_classifications:
+            if c.get("is_priority"):
+                by_type[c["label"]].append({"page": c["page"], "label": c["label"]})
+
+        # Take initial allocation per type
         selections = []
         for page_type, limit in TYPE_LIMITS.items():
             selections.extend(by_type[page_type][:limit])
 
-        # Sort by page number so Claude sees them in order
+        # Fill remaining slots from whatever types have leftovers,
+        # prioritizing framing_plan > roof_plan > elevation > floor_plan
+        included_pages = {p["page"] for p in selections}
+        leftovers = []
+        for page_type, limit in TYPE_LIMITS.items():
+            for p in by_type[page_type][limit:]:
+                leftovers.append(p)
+
+        priority_order = ["framing_plan", "roof_plan", "elevation", "floor_plan"]
+        leftovers.sort(key=lambda p: (priority_order.index(p["label"]) if p["label"] in priority_order else 99, p["page"]))
+
+        for p in leftovers:
+            if len(selections) >= MAX_EXTRACT_PAGES:
+                break
+            if p["page"] not in included_pages:
+                selections.append(p)
+                included_pages.add(p["page"])
+
         selections.sort(key=lambda p: p["page"])
 
         logger.info("Extracting from %d of %d pages (priority capped at %d): %s",
