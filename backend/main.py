@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import database
 import scanner
 
 logger = logging.getLogger("uvicorn.error")
@@ -178,12 +179,72 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
     }
 
 
-@app.get("/scans/{filename}")
+@app.get("/scans/download/{filename}")
 async def download_scan(filename: str):
     path = scanner.SCANS_DIR / filename
     if not path.exists():
         raise HTTPException(404, "File not found")
     return FileResponse(path, media_type="application/json", filename=filename)
+
+
+class SaveScanRequest(BaseModel):
+    upload_id: str
+    prompt_used: str
+    extraction_fields: Dict
+    thumbnail_data: Optional[List] = None
+
+
+@app.post("/scans/save")
+async def save_scan_to_db(req: SaveScanRequest):
+    if req.upload_id not in uploads:
+        raise HTTPException(404, "Upload not found")
+
+    info = uploads[req.upload_id]
+    try:
+        scan_id = database.save_scan(
+            filename=info["filename"],
+            prompt_used=req.prompt_used,
+            extraction_fields=req.extraction_fields,
+            pdf_path=info["path"],
+            thumbnail_data=req.thumbnail_data or [],
+        )
+    except Exception as e:
+        logger.error("Save to Supabase failed: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, f"Save failed: {str(e)}")
+
+    return {"scan_id": scan_id}
+
+
+@app.get("/scans")
+async def list_scans():
+    try:
+        scans = database.get_all_scans()
+    except Exception as e:
+        logger.error("Fetch scans failed: %s", e)
+        raise HTTPException(500, f"Fetch failed: {str(e)}")
+    return {"scans": scans}
+
+
+@app.get("/scans/{scan_id}")
+async def get_scan(scan_id: str):
+    try:
+        scan = database.get_scan(scan_id)
+    except Exception as e:
+        logger.error("Fetch scan failed: %s", e)
+        raise HTTPException(404, "Scan not found")
+    return scan
+
+
+@app.delete("/scans/{scan_id}")
+async def delete_scan(scan_id: str):
+    try:
+        deleted = database.delete_scan(scan_id)
+    except Exception as e:
+        logger.error("Delete scan failed: %s", e)
+        raise HTTPException(500, f"Delete failed: {str(e)}")
+    if not deleted:
+        raise HTTPException(404, "Scan not found")
+    return {"deleted": True}
 
 
 if __name__ == "__main__":

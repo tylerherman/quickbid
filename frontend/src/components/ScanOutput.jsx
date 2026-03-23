@@ -26,16 +26,19 @@ const ROOM_LABELS = {
   garages: "Garages",
 };
 
-export default function ScanOutput({ data, uploadId }) {
+export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, onSaved, readOnly = false }) {
   const [fields, setFields] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(null);
+  const [savingToDb, setSavingToDb] = useState(false);
+  const [savedToDb, setSavedToDb] = useState(false);
   const [error, setError] = useState(null);
 
   // Reset local state when new data arrives
   if (data?.fields && data.fields !== fields && !saving) {
     setFields(data.fields);
     setSaved(null);
+    setSavedToDb(false);
     setError(null);
   }
 
@@ -85,6 +88,25 @@ export default function ScanOutput({ data, uploadId }) {
   flatEntries.forEach((e) => {
     if (counts[e.confidence] !== undefined) counts[e.confidence]++;
   });
+
+  const handleSaveToDb = async () => {
+    setSavingToDb(true);
+    setError(null);
+    try {
+      await api.post("/scans/save", {
+        upload_id: uploadId || "",
+        prompt_used: promptUsed || "",
+        extraction_fields: fields,
+        thumbnail_data: thumbnailData || [],
+      });
+      setSavedToDb(true);
+      if (onSaved) onSaved();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Save failed");
+    } finally {
+      setSavingToDb(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -344,29 +366,51 @@ export default function ScanOutput({ data, uploadId }) {
       </div>
 
       {/* Save bar */}
-      <div className="p-4 border-t border-gray-200 shrink-0">
-        {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
-        {saved ? (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-green-600 font-medium">Saved</span>
-            <a
-              href={`${import.meta.env.VITE_API_URL || ""}/scans/${saved.filename}`}
-              download
-              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-            >
-              Download JSON
-            </a>
+      {!readOnly && (
+        <div className="p-4 border-t border-gray-200 shrink-0">
+          {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
+          <div className="flex gap-2">
+            {savedToDb ? (
+              <span className="flex-1 py-2.5 text-center text-sm font-medium text-green-600">
+                Saved!
+              </span>
+            ) : (
+              <button
+                onClick={handleSaveToDb}
+                disabled={savingToDb}
+                className="flex-1 py-2.5 rounded-lg font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+              >
+                {savingToDb ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Saving...
+                  </span>
+                ) : "Save Results"}
+              </button>
+            )}
+            {saved ? (
+              <a
+                href={`${import.meta.env.VITE_API_URL || ""}/scans/download/${saved.filename}`}
+                download
+                className="px-4 py-2.5 rounded-lg text-sm font-medium text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors"
+              >
+                Download JSON
+              </a>
+            ) : (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? "..." : "Export JSON"}
+              </button>
+            )}
           </div>
-        ) : (
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full py-2.5 rounded-lg font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
-          >
-            {saving ? "Saving..." : "Save Results"}
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

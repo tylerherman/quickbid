@@ -19,6 +19,8 @@ export default function ScanSetup({
   uploadResult,
   setUploadResult,
   defaultPrompt,
+  promptText,
+  setPromptText,
   fields,
   scanning,
   setScanning,
@@ -26,7 +28,6 @@ export default function ScanSetup({
   setScanStatus,
   onResult,
 }) {
-  const [promptText, setPromptText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
@@ -38,11 +39,6 @@ export default function ScanSetup({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const inputRef = useRef();
   const dropdownRef = useRef();
-
-  // Sync default prompt into editor once loaded
-  if (!promptText && defaultPrompt) {
-    setPromptText(defaultPrompt);
-  }
 
   // Close dropdown on outside click
   useEffect(() => {
