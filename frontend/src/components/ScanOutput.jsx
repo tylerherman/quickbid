@@ -84,7 +84,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
   const rooms = fields.rooms || {};
   Object.values(rooms).forEach((r) => flatEntries.push(r));
   const total = flatEntries.length;
-  const counts = { extracted: 0, inferred: 0, not_found: 0 };
+  const counts = { extracted: 0, inferred: 0, unclear: 0, not_found: 0 };
   flatEntries.forEach((e) => {
     if (counts[e.confidence] !== undefined) counts[e.confidence]++;
   });
@@ -141,6 +141,9 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
           <span className="text-xs text-yellow-700">
             {counts.inferred} inferred
           </span>
+          <span className="text-xs text-amber-700">
+            {counts.unclear} unclear
+          </span>
           <span className="text-xs text-red-700">
             {counts.not_found} not found
           </span>
@@ -158,6 +161,12 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
               style={{ width: `${(counts.inferred / total) * 100}%` }}
             />
           )}
+          {counts.unclear > 0 && (
+            <div
+              className="bg-amber-400 h-full"
+              style={{ width: `${(counts.unclear / total) * 100}%` }}
+            />
+          )}
           {counts.not_found > 0 && (
             <div
               className="bg-red-400 h-full"
@@ -173,6 +182,10 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
           <span className="flex items-center gap-1 text-xs text-gray-500">
             <span className="inline-block w-2 h-2 rounded-full bg-yellow-400" />
             Inferred — Value reasoned from context
+          </span>
+          <span className="flex items-center gap-1 text-xs text-gray-500">
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+            Unclear — Ambiguous or partially visible
           </span>
           <span className="flex items-center gap-1 text-xs text-gray-500">
             <span className="inline-block w-2 h-2 rounded-full bg-red-400" />
@@ -270,6 +283,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
                       >
                         <option value="extracted">Extracted</option>
                         <option value="inferred">Inferred</option>
+                        <option value="unclear">Unclear</option>
                         <option value="not_found">Not Found</option>
                       </select>
                     </div>
@@ -342,6 +356,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
                         >
                           <option value="extracted">Extracted</option>
                           <option value="inferred">Inferred</option>
+                          <option value="unclear">Unclear</option>
                           <option value="not_found">Not Found</option>
                         </select>
                       </div>
