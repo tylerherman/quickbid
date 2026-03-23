@@ -219,34 +219,41 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
 
     info = uploads[req.upload_id]
 
-    MAX_EXTRACT_PAGES = 10
+    MAX_EXTRACT_PAGES = 12
 
     # Use provided page_selections or build from classifications
     if req.page_selections:
         selections = req.page_selections
     else:
+        from collections import defaultdict
+
         all_classifications = info["classifications"]
         total_pages = len(all_classifications)
 
-        # Priority pages first, then fill remaining slots with others
-        priority = [
-            {"page": c["page"], "label": c["label"]}
-            for c in all_classifications
-            if c.get("is_priority")
-        ]
-        others = [
-            {"page": c["page"], "label": c["label"]}
-            for c in all_classifications
-            if not c.get("is_priority")
-        ]
+        # Group priority pages by type
+        by_type = defaultdict(list)
+        for c in all_classifications:
+            if c.get("is_priority"):
+                by_type[c["label"]].append({"page": c["page"], "label": c["label"]})
 
-        selections = priority[:MAX_EXTRACT_PAGES]
-        remaining_slots = MAX_EXTRACT_PAGES - len(selections)
-        if remaining_slots > 0:
-            selections.extend(others[:remaining_slots])
+        # Take best pages per type — prioritize variety over volume
+        TYPE_LIMITS = {
+            "framing_plan": 3,
+            "roof_plan": 2,
+            "elevation": 4,
+            "floor_plan": 3,
+        }
 
-        logger.info("Extracting from %d of %d pages (priority capped at %d)",
-                     len(selections), total_pages, MAX_EXTRACT_PAGES)
+        selections = []
+        for page_type, limit in TYPE_LIMITS.items():
+            selections.extend(by_type[page_type][:limit])
+
+        # Sort by page number so Claude sees them in order
+        selections.sort(key=lambda p: p["page"])
+
+        logger.info("Extracting from %d of %d pages (priority capped at %d): %s",
+                     len(selections), total_pages, MAX_EXTRACT_PAGES,
+                     ", ".join(f"p{s['page']}({s['label']})" for s in selections))
 
     if not selections:
         raise HTTPException(400, "No priority pages found. Label at least one page as framing_plan, roof_plan, elevation, or floor_plan.")
