@@ -19,6 +19,13 @@ const FIELD_LABELS = {
 
 const ARRAY_FIELDS = ["roof_pitch", "notes"];
 
+const ROOM_LABELS = {
+  bedrooms: "Bedrooms",
+  bathrooms: "Bathrooms",
+  kitchens: "Kitchens",
+  garages: "Garages",
+};
+
 export default function ScanOutput({ data, uploadId }) {
   const [fields, setFields] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -57,10 +64,25 @@ export default function ScanOutput({ data, uploadId }) {
     }));
   };
 
-  const entries = Object.values(fields);
-  const total = entries.length;
+  const updateRoomField = (roomType, fieldName, value) => {
+    setFields((prev) => ({
+      ...prev,
+      rooms: {
+        ...prev.rooms,
+        [roomType]: { ...prev.rooms[roomType], [fieldName]: value },
+      },
+    }));
+  };
+
+  // Confidence counting — include rooms sub-fields
+  const flatEntries = Object.entries(fields)
+    .filter(([k]) => k !== "rooms")
+    .map(([, v]) => v);
+  const rooms = fields.rooms || {};
+  Object.values(rooms).forEach((r) => flatEntries.push(r));
+  const total = flatEntries.length;
   const counts = { extracted: 0, inferred: 0, not_found: 0 };
-  entries.forEach((e) => {
+  flatEntries.forEach((e) => {
     if (counts[e.confidence] !== undefined) counts[e.confidence]++;
   });
 
@@ -140,97 +162,184 @@ export default function ScanOutput({ data, uploadId }) {
       {/* Fields */}
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="divide-y divide-gray-100">
-          {Object.entries(fields).map(([key, field]) => {
-            const isArray = ARRAY_FIELDS.includes(key);
-            const displayValue = isArray
-              ? Array.isArray(field.value)
-                ? field.value.join(", ")
-                : field.value || ""
-              : field.value ?? "";
+          {Object.entries(fields)
+            .filter(([key]) => key !== "rooms")
+            .map(([key, field]) => {
+              const isArray = ARRAY_FIELDS.includes(key);
+              const displayValue = isArray
+                ? Array.isArray(field.value)
+                  ? field.value.join(", ")
+                  : field.value || ""
+                : field.value ?? "";
 
-            return (
-              <div
-                key={key}
-                className={`p-4 ${
-                  field.confidence === "not_found" ? "bg-red-50" : ""
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="w-36 shrink-0">
-                    <label className="text-sm font-medium text-gray-700">
-                      {FIELD_LABELS[key] || key}
-                    </label>
-                    <div className="mt-1">
-                      <ConfidenceBadge confidence={field.confidence} />
+              return (
+                <div
+                  key={key}
+                  className={`p-4 ${
+                    field.confidence === "not_found" ? "bg-red-50" : ""
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="w-36 shrink-0">
+                      <label className="text-sm font-medium text-gray-700">
+                        {FIELD_LABELS[key] || key}
+                      </label>
+                      <div className="mt-1">
+                        <ConfidenceBadge confidence={field.confidence} />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex-1">
-                    {key === "notes" ? (
-                      <textarea
-                        value={displayValue}
-                        onChange={(e) => {
-                          const val = e.target.value
-                            .split(",")
-                            .map((s) => s.trim())
-                            .filter(Boolean);
-                          updateValue(key, val);
-                        }}
-                        rows={2}
-                        className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                        placeholder="Comma-separated notes..."
-                      />
-                    ) : (
-                      <input
-                        type="text"
-                        value={displayValue}
-                        onChange={(e) => {
-                          if (isArray) {
+                    <div className="flex-1">
+                      {key === "notes" ? (
+                        <textarea
+                          value={displayValue}
+                          onChange={(e) => {
                             const val = e.target.value
                               .split(",")
                               .map((s) => s.trim())
                               .filter(Boolean);
                             updateValue(key, val);
-                          } else {
-                            updateValue(key, e.target.value);
+                          }}
+                          rows={2}
+                          className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                          placeholder="Comma-separated notes..."
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={displayValue}
+                          onChange={(e) => {
+                            if (isArray) {
+                              const val = e.target.value
+                                .split(",")
+                                .map((s) => s.trim())
+                                .filter(Boolean);
+                              updateValue(key, val);
+                            } else {
+                              updateValue(key, e.target.value);
+                            }
+                          }}
+                          className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                          placeholder={
+                            field.confidence === "not_found"
+                              ? "Enter value..."
+                              : ""
                           }
-                        }}
-                        className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                        placeholder={
-                          field.confidence === "not_found"
-                            ? "Enter value..."
-                            : ""
-                        }
-                      />
-                    )}
-                    {field.reasoning && (
-                      <div className="mt-1.5">
-                        <p className="text-sm text-gray-500">
-                          {field.reasoning}
-                        </p>
-                        {field.source_page && (
+                        />
+                      )}
+                      {field.reasoning && (
+                        <div className="mt-1.5">
+                          <p className="text-sm text-gray-500">
+                            {field.reasoning}
+                          </p>
+                          {field.source_page && (
+                            <p className="text-sm text-gray-400 mt-0.5">
+                              <span className="font-medium">Source:</span>{" "}
+                              {field.source_page}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="w-24 shrink-0">
+                      <select
+                        value={field.confidence}
+                        onChange={(e) => updateConfidence(key, e.target.value)}
+                        className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      >
+                        <option value="extracted">Extracted</option>
+                        <option value="inferred">Inferred</option>
+                        <option value="not_found">Not Found</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+          {/* Rooms grouped card */}
+          {fields.rooms && (
+            <div className="p-4">
+              <label className="text-sm font-semibold text-gray-900 mb-3 block">
+                Rooms
+              </label>
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {Object.entries(fields.rooms).map(([roomType, room]) => (
+                  <div
+                    key={roomType}
+                    className={`p-3 ${
+                      room.confidence === "not_found" ? "bg-red-50" : ""
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-28 shrink-0">
+                        <label className="text-sm font-medium text-gray-700">
+                          {ROOM_LABELS[roomType] || roomType}
+                        </label>
+                        <div className="mt-1">
+                          <ConfidenceBadge confidence={room.confidence} />
+                        </div>
+                      </div>
+                      <div className="flex-1 flex gap-3">
+                        <div className="flex-1">
+                          <label className="text-[11px] text-gray-400 uppercase tracking-wide">
+                            Count
+                          </label>
+                          <input
+                            type="text"
+                            value={room.count ?? ""}
+                            onChange={(e) =>
+                              updateRoomField(roomType, "count", e.target.value || null)
+                            }
+                            className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                            placeholder="-"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="text-[11px] text-gray-400 uppercase tracking-wide">
+                            Total Sq Ft
+                          </label>
+                          <input
+                            type="text"
+                            value={room.total_sqft ?? ""}
+                            onChange={(e) =>
+                              updateRoomField(roomType, "total_sqft", e.target.value || null)
+                            }
+                            className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                            placeholder="-"
+                          />
+                        </div>
+                      </div>
+                      <div className="w-24 shrink-0">
+                        <label className="text-[11px] text-gray-400 invisible">x</label>
+                        <select
+                          value={room.confidence}
+                          onChange={(e) =>
+                            updateRoomField(roomType, "confidence", e.target.value)
+                          }
+                          className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        >
+                          <option value="extracted">Extracted</option>
+                          <option value="inferred">Inferred</option>
+                          <option value="not_found">Not Found</option>
+                        </select>
+                      </div>
+                    </div>
+                    {room.reasoning && (
+                      <div className="mt-1.5 ml-[7.5rem]">
+                        <p className="text-sm text-gray-500">{room.reasoning}</p>
+                        {room.source_page && (
                           <p className="text-sm text-gray-400 mt-0.5">
                             <span className="font-medium">Source:</span>{" "}
-                            {field.source_page}
+                            {room.source_page}
                           </p>
                         )}
                       </div>
                     )}
                   </div>
-                  <div className="w-24 shrink-0">
-                    <select
-                      value={field.confidence}
-                      onChange={(e) => updateConfidence(key, e.target.value)}
-                      className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                    >
-                      <option value="extracted">Extracted</option>
-                      <option value="inferred">Inferred</option>
-                      <option value="not_found">Not Found</option>
-                    </select>
-                  </div>
-                </div>
+                ))}
               </div>
-            );
-          })}
+            </div>
+          )}
         </div>
       </div>
 

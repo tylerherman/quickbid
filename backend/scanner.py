@@ -33,6 +33,12 @@ EXTRACTION_FIELDS = {
     "truss_type": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "porch_or_addition": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "notes": {"value": [], "confidence": "not_found", "reasoning": None, "source_page": None},
+    "rooms": {
+        "bedrooms": {"count": None, "total_sqft": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "bathrooms": {"count": None, "total_sqft": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "kitchens": {"count": None, "total_sqft": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "garages": {"count": None, "total_sqft": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    },
 }
 
 
@@ -123,6 +129,10 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
     # Build thumbnail base64 list for frontend
     thumb_data = [_image_to_base64(t, max_width=300) for t in thumbnails]
 
+    # Build higher-res images for lightbox viewing
+    hires_pages = convert_from_path(pdf_path, dpi=150, fmt="jpeg")
+    full_data = [_image_to_base64(p, max_width=1200) for p in hires_pages]
+
     priority_order = {t: i for i, t in enumerate(PRIORITY_TYPES)}
 
     for p in pages:
@@ -135,6 +145,7 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
         "total_pages": len(thumbnails),
         "classifications": pages,
         "thumbnails": thumb_data,
+        "full_images": full_data,
     }
 
 
@@ -151,6 +162,21 @@ DEFAULT_EXTRACTION_PROMPT = (
     "Example: \"Found '1,135 sq ft' labeled as 'Total Living Area' in the building area schedule on the title sheet.\"\n"
     "- \"source_page\": The page number and label where the data was found, e.g. \"Page 1 (cover)\" or \"Page 3 (framing_plan)\". "
     "If inferred, explain which pages were used. If not found, explain what was looked for and where.\n\n"
+    "Field-specific guidance:\n"
+    "- For ridge_count: Count every visible ridge line on the roof framing or roof plan. "
+    "A ridge is a horizontal peak line where two roof slopes meet. Count each distinct ridge line as 1, "
+    "including main ridges and any secondary ridges from wings, additions, or offsets. "
+    "If you can see ridge lines but the number is not labeled, count them visually and report that count as 'inferred'. "
+    "Do not return not_found if ridge lines are visible — always attempt a visual count.\n"
+    "- For rooms: The 'rooms' object contains bedrooms, bathrooms, kitchens, and garages. "
+    "For each room type, count all instances across all floors. "
+    "For total_sqft, sum the square footage of all rooms of that type if dimensions are labeled. "
+    "If only some rooms have dimensions, sum what is available and note which rooms are missing in reasoning. "
+    "If room labels are visible but no dimensions are given, set count from the labels and total_sqft to null, "
+    "with reasoning explaining that dimensions were not labeled. "
+    "Confidence: 'extracted' if both count and sqft come directly from labeled dimensions, "
+    "'inferred' if count is visible but sqft is calculated or estimated from dimensions, "
+    "'not_found' if that room type is not visible at all.\n\n"
     "Return ONLY valid JSON matching this exact structure:\n"
     f"{json.dumps(EXTRACTION_FIELDS, indent=2)}\n\n"
     "For roof_pitch and notes, the value should be an array. "

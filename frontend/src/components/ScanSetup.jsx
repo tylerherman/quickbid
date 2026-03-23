@@ -1,5 +1,19 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import api from "../api";
+
+const LS_KEY = "quickbid_saved_prompts";
+
+function loadSavedPrompts() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function persistPrompts(prompts) {
+  localStorage.setItem(LS_KEY, JSON.stringify(prompts));
+}
 
 export default function ScanSetup({
   uploadResult,
@@ -16,12 +30,60 @@ export default function ScanSetup({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+  const [savedPrompts, setSavedPrompts] = useState(loadSavedPrompts);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveNameInput, setSaveNameInput] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const inputRef = useRef();
+  const dropdownRef = useRef();
 
   // Sync default prompt into editor once loaded
   if (!promptText && defaultPrompt) {
     setPromptText(defaultPrompt);
   }
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Find which saved prompt matches current editor text
+  const activePrompt = savedPrompts.find((p) => p.prompt_text === promptText);
+
+  const handleSavePrompt = () => {
+    if (!saveNameInput.trim()) return;
+    const newPrompt = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      name: saveNameInput.trim(),
+      prompt_text: promptText,
+      saved_at: new Date().toISOString(),
+    };
+    const updated = [...savedPrompts, newPrompt];
+    setSavedPrompts(updated);
+    persistPrompts(updated);
+    setSaveNameInput("");
+    setShowSaveModal(false);
+  };
+
+  const handleDeletePrompt = (id) => {
+    const updated = savedPrompts.filter((p) => p.id !== id);
+    setSavedPrompts(updated);
+    persistPrompts(updated);
+    setDeleteTarget(null);
+  };
+
+  const handleSelectPrompt = (prompt) => {
+    setPromptText(prompt.prompt_text);
+    setDropdownOpen(false);
+  };
 
   const handleFile = async (file) => {
     if (!file || file.type !== "application/pdf") {
@@ -69,6 +131,7 @@ export default function ScanSetup({
 
   const classifications = uploadResult?.classifications || [];
   const thumbnails = uploadResult?.thumbnails || [];
+  const fullImages = uploadResult?.full_images || [];
 
   return (
     <div className="flex flex-col h-full">
@@ -109,7 +172,8 @@ export default function ScanSetup({
                 return (
                   <div
                     key={i}
-                    className={`shrink-0 rounded overflow-hidden border ${
+                    onClick={() => setLightboxIndex(i)}
+                    className={`shrink-0 rounded overflow-hidden border cursor-pointer hover:opacity-80 transition-opacity ${
                       isPriority
                         ? "border-blue-400 ring-1 ring-blue-200"
                         : "border-gray-200"
@@ -207,6 +271,67 @@ export default function ScanSetup({
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
           Extraction Prompt
         </label>
+
+        {/* Saved prompts toolbar */}
+        <div className="flex items-center gap-2 mb-2">
+          <div className="relative flex-1" ref={dropdownRef}>
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-sm border border-gray-200 rounded-md bg-white hover:bg-gray-50 text-left"
+            >
+              <span className={activePrompt ? "text-gray-900" : "text-gray-400"}>
+                {activePrompt ? activePrompt.name : "Select a saved prompt..."}
+              </span>
+              <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {dropdownOpen && (
+              <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                {savedPrompts.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-400">No saved prompts</div>
+                ) : (
+                  savedPrompts.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 group"
+                    >
+                      <button
+                        onClick={() => handleSelectPrompt(p)}
+                        className="flex-1 text-left text-sm text-gray-700 truncate"
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget(p);
+                          setDropdownOpen(false);
+                        }}
+                        className="ml-2 p-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        title="Delete prompt"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setSaveNameInput("");
+              setShowSaveModal(true);
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50 transition-colors shrink-0"
+          >
+            Save
+          </button>
+        </div>
+
         <textarea
           value={promptText}
           onChange={(e) => setPromptText(e.target.value)}
@@ -296,6 +421,141 @@ export default function ScanSetup({
           )}
         </button>
       </div>
+
+      {/* Save prompt modal */}
+      {showSaveModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowSaveModal(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-5 w-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">
+              Name this prompt
+            </h3>
+            <input
+              type="text"
+              value={saveNameInput}
+              onChange={(e) => setSaveNameInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSavePrompt()}
+              className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent mb-4"
+              placeholder="e.g. Roof-focused extraction"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowSaveModal(false)}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSavePrompt}
+                disabled={!saveNameInput.trim()}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-5 w-80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              Delete &lsquo;{deleteTarget.name}&rsquo;?
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeletePrompt(deleteTarget.id)}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox modal */}
+      {lightboxIndex !== null && (fullImages[lightboxIndex] || thumbnails[lightboxIndex]) && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setLightboxIndex(null)}
+        >
+          <div
+            className="relative bg-white rounded-lg shadow-2xl flex flex-col"
+            style={{ width: "95vw", height: "95vh" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 shrink-0">
+              <span className="text-sm font-medium text-gray-900">
+                Page {lightboxIndex + 1}
+                {(() => {
+                  const cls = classifications.find(
+                    (c) => c.page === lightboxIndex + 1
+                  );
+                  return cls ? ` — ${cls.label.replace("_", " ")}` : "";
+                })()}
+              </span>
+              <button
+                onClick={() => setLightboxIndex(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none px-1"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Image */}
+            <div className="flex-1 min-h-0 flex items-center justify-center p-1 overflow-hidden">
+              <img
+                src={`data:image/jpeg;base64,${fullImages[lightboxIndex] || thumbnails[lightboxIndex]}`}
+                alt={`Page ${lightboxIndex + 1}`}
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+
+            {/* Nav arrows */}
+            {lightboxIndex > 0 && (
+              <button
+                onClick={() => setLightboxIndex(lightboxIndex - 1)}
+                className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-white/90 shadow border border-gray-200 text-gray-600 hover:text-gray-900 hover:bg-white text-lg"
+              >
+                &#8249;
+              </button>
+            )}
+            {lightboxIndex < thumbnails.length - 1 && (
+              <button
+                onClick={() => setLightboxIndex(lightboxIndex + 1)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full bg-white/90 shadow border border-gray-200 text-gray-600 hover:text-gray-900 hover:bg-white text-lg"
+              >
+                &#8250;
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
