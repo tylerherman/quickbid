@@ -322,6 +322,11 @@ class SaveScanRequest(BaseModel):
     prompt_used: str
     extraction_fields: Dict
     thumbnail_data: Optional[List] = None
+    bdft: Optional[float] = None
+
+
+class UpdateScanRequest(BaseModel):
+    bdft: Optional[float] = None
 
 
 @app.post("/scans/save")
@@ -337,6 +342,7 @@ async def save_scan_to_db(req: SaveScanRequest):
             extraction_fields=req.extraction_fields,
             pdf_path=info["path"],
             thumbnail_data=req.thumbnail_data or [],
+            bdft=req.bdft,
         )
     except Exception as e:
         logger.error("Save to Supabase failed: %s\n%s", e, traceback.format_exc())
@@ -363,6 +369,23 @@ async def get_scan(scan_id: str):
         logger.error("Fetch scan failed: %s", e)
         raise HTTPException(404, "Scan not found")
     return scan
+
+
+@app.patch("/scans/{scan_id}")
+async def update_scan(scan_id: str, req: UpdateScanRequest):
+    updates = {}
+    if req.bdft is not None:
+        updates["bdft"] = req.bdft
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    try:
+        result = database.update_scan(scan_id, updates)
+    except Exception as e:
+        logger.error("Update scan failed: %s", e)
+        raise HTTPException(500, f"Update failed: {str(e)}")
+    if not result:
+        raise HTTPException(404, "Scan not found")
+    return result
 
 
 @app.delete("/scans/{scan_id}")

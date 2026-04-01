@@ -9,6 +9,8 @@ export default function ScanDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [editingBdft, setEditingBdft] = useState(false);
+  const [bdftValue, setBdftValue] = useState("");
 
   useEffect(() => {
     api
@@ -41,6 +43,22 @@ export default function ScanDetail() {
       </div>
     );
   }
+
+  const saveBdft = async () => {
+    const parsed = bdftValue !== "" ? parseFloat(bdftValue) : null;
+    if (parsed === null && !scan.bdft) {
+      setEditingBdft(false);
+      return;
+    }
+    try {
+      await api.patch(`/scans/${id}`, { bdft: parsed });
+      setScan((prev) => ({ ...prev, bdft: parsed }));
+    } catch {
+      // revert on failure
+      setBdftValue(scan.bdft != null ? String(scan.bdft) : "");
+    }
+    setEditingBdft(false);
+  };
 
   const thumbnails = scan.thumbnail_data || [];
   const date = scan.saved_at
@@ -114,6 +132,42 @@ export default function ScanDetail() {
               </pre>
             )}
           </div>
+        )}
+      </div>
+
+      {/* BDFT field */}
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3">
+        <span className="text-sm font-medium text-gray-700 w-24 shrink-0">
+          Actual BDFT
+        </span>
+        {editingBdft ? (
+          <input
+            type="number"
+            step="0.01"
+            autoFocus
+            value={bdftValue}
+            onChange={(e) => setBdftValue(e.target.value)}
+            onBlur={saveBdft}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveBdft();
+              if (e.key === "Escape") {
+                setBdftValue(scan.bdft != null ? String(scan.bdft) : "");
+                setEditingBdft(false);
+              }
+            }}
+            className="w-40 border border-blue-300 rounded-md px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            placeholder="e.g. 12.50"
+          />
+        ) : (
+          <button
+            onClick={() => {
+              setBdftValue(scan.bdft != null ? String(scan.bdft) : "");
+              setEditingBdft(true);
+            }}
+            className="text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+          >
+            {scan.bdft != null ? scan.bdft : <span className="text-gray-400 italic">Not set</span>}
+          </button>
         )}
       </div>
 

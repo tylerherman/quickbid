@@ -24,6 +24,7 @@ def save_scan(
     extraction_fields: dict,
     pdf_path: str,
     thumbnail_data: list,
+    bdft: float = None,
 ) -> str:
     client = _get_client()
     scan_id = str(uuid.uuid4())
@@ -40,14 +41,17 @@ def save_scan(
     pdf_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{pdf_storage_path}"
 
     # Insert scan record
-    client.table("scans").insert({
+    record = {
         "id": scan_id,
         "filename": filename,
         "prompt_used": prompt_used,
         "extraction_fields": extraction_fields,
         "pdf_url": pdf_url,
         "thumbnail_data": thumbnail_data,
-    }).execute()
+    }
+    if bdft is not None:
+        record["bdft"] = bdft
+    client.table("scans").insert(record).execute()
 
     return scan_id
 
@@ -55,7 +59,7 @@ def save_scan(
 def get_all_scans() -> list:
     client = _get_client()
     result = client.table("scans").select(
-        "id, filename, saved_at, extraction_fields, pdf_url"
+        "id, filename, saved_at, extraction_fields, pdf_url, bdft"
     ).order("saved_at", desc=True).execute()
     return result.data
 
@@ -64,6 +68,14 @@ def get_scan(scan_id: str) -> dict:
     client = _get_client()
     result = client.table("scans").select("*").eq("id", scan_id).single().execute()
     return result.data
+
+
+def update_scan(scan_id: str, updates: dict) -> dict:
+    client = _get_client()
+    result = client.table("scans").update(updates).eq("id", scan_id).execute()
+    if not result.data:
+        return None
+    return result.data[0]
 
 
 def delete_scan(scan_id: str) -> bool:

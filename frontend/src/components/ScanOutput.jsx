@@ -34,6 +34,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
   const [savingToDb, setSavingToDb] = useState(false);
   const [savedToDb, setSavedToDb] = useState(false);
   const [error, setError] = useState(null);
+  const [bdft, setBdft] = useState("");
 
   // Reset local state when new data arrives
   if (data?.fields && data.fields !== fields && !saving) {
@@ -99,6 +100,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
         prompt_used: promptUsed || "",
         extraction_fields: fields,
         thumbnail_data: thumbnailData || [],
+        bdft: bdft !== "" ? parseFloat(bdft) : null,
       });
       setSavedToDb(true);
       if (onSaved) onSaved();
@@ -385,6 +387,22 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
       {!readOnly && (
         <div className="p-4 border-t border-gray-200 shrink-0">
           {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
+          <div className="mb-3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Actual BDFT
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              value={bdft}
+              onChange={(e) => setBdft(e.target.value)}
+              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              placeholder="Enter the actual board feet per thousand for this job"
+            />
+            <p className="text-xs text-gray-400 mt-0.5">
+              Enter the actual board feet per thousand for this job
+            </p>
+          </div>
           <div className="flex gap-2">
             {savedToDb ? (
               <span className="flex-1 py-2.5 text-center text-sm font-medium text-green-600">
