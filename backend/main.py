@@ -371,6 +371,39 @@ async def get_scan(scan_id: str):
     return scan
 
 
+@app.get("/scans/{scan_id}/matches")
+async def get_scan_matches(scan_id: str):
+    try:
+        target = database.get_scan(scan_id)
+    except Exception as e:
+        logger.error("Fetch scan for matches failed: %s", e)
+        raise HTTPException(404, "Scan not found")
+
+    try:
+        all_scans = database.get_all_scans()
+    except Exception as e:
+        logger.error("Fetch scans for matching failed: %s", e)
+        raise HTTPException(500, f"Fetch failed: {str(e)}")
+
+    # Only compare against other scans that have bdft set
+    candidates = [s for s in all_scans if s["id"] != scan_id and s.get("bdft") is not None]
+
+    results = []
+    for candidate in candidates:
+        match = scanner.compute_match_score(target, candidate)
+        results.append({
+            "scan_id": candidate["id"],
+            "filename": candidate["filename"],
+            "score": match["score"],
+            "reason": match["reason"],
+            "bdft": candidate.get("bdft"),
+            "saved_at": candidate.get("saved_at"),
+        })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return {"matches": results[:5]}
+
+
 @app.patch("/scans/{scan_id}")
 async def update_scan(scan_id: str, req: UpdateScanRequest):
     updates = {}

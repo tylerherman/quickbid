@@ -322,6 +322,194 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     return result
 
 
+def _get_field_value(scan_fields: dict, key: str):
+    """Extract the raw value from a scan's extraction_fields."""
+    field = scan_fields.get(key)
+    if not field:
+        return None
+    val = field.get("value")
+    if val is None or val == "" or val == []:
+        return None
+    return val
+
+
+def _parse_number(val) -> float | None:
+    """Try to parse a numeric value from a string or number."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        cleaned = val.replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _numeric_proximity(a: float, b: float) -> float:
+    """Score = max(0, 1 - abs(a-b) / max(a, b))."""
+    denom = max(a, b)
+    if denom == 0:
+        return 1.0
+    return max(0.0, 1.0 - abs(a - b) / denom)
+
+
+def _normalize_pitches(val) -> set:
+    """Normalize roof_pitch values to a set of strings."""
+    if isinstance(val, list):
+        return {str(v).strip().lower() for v in val if v}
+    if isinstance(val, str):
+        return {val.strip().lower()}
+    return set()
+
+
+def _parse_bool_ish(val) -> bool | None:
+    """Parse porch_or_addition as boolean."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        low = val.strip().lower()
+        if low in ("true", "yes", "1"):
+            return True
+        if low in ("false", "no", "none", "0", "n/a"):
+            return False
+    return None
+
+
+def compute_match_score(scan_a: dict, scan_b: dict) -> dict:
+    """Compare two scans and return a match score + reason string.
+
+    scan_a and scan_b are full scan records from Supabase (with extraction_fields).
+    Returns {"score": int 0-100, "reason": str}.
+    """
+    fields_a = scan_a.get("extraction_fields") or {}
+    fields_b = scan_b.get("extraction_fields") or {}
+
+    WEIGHTS = {
+        "square_footage": 0.30,
+        "stories": 0.15,
+        "roof_pitch": 0.15,
+        "truss_type": 0.15,
+        "ridge_count": 0.10,
+        "valley_count": 0.10,
+        "porch_or_addition": 0.05,
+    }
+
+    scores = {}
+    reasons = []
+    total_weight = 0.0
+
+    # square_footage
+    sf_a = _parse_number(_get_field_value(fields_a, "square_footage"))
+    sf_b = _parse_number(_get_field_value(fields_b, "square_footage"))
+    if sf_a is not None and sf_b is not None and sf_a > 0 and sf_b > 0:
+        s = _numeric_proximity(sf_a, sf_b)
+        scores["square_footage"] = s
+        total_weight += WEIGHTS["square_footage"]
+        pct_diff = abs(sf_a - sf_b) / max(sf_a, sf_b) * 100
+        reasons.append(f"square footage within {pct_diff:.0f}% ({sf_a:,.0f} vs {sf_b:,.0f} sqft)")
+
+    # stories
+    st_a = _get_field_value(fields_a, "stories")
+    st_b = _get_field_value(fields_b, "stories")
+    if st_a is not None and st_b is not None:
+        s = 1.0 if str(st_a).strip() == str(st_b).strip() else 0.0
+        scores["stories"] = s
+        total_weight += WEIGHTS["stories"]
+        if s == 1.0:
+            reasons.append(f"same stories ({st_a})")
+        else:
+            reasons.append(f"different stories ({st_a} vs {st_b})")
+
+    # roof_pitch
+    rp_a = _normalize_pitches(_get_field_value(fields_a, "roof_pitch"))
+    rp_b = _normalize_pitches(_get_field_value(fields_b, "roof_pitch"))
+    if rp_a and rp_b:
+        overlap = rp_a & rp_b
+        if overlap == rp_a == rp_b:
+            s = 1.0
+        elif overlap:
+            s = 0.5
+        else:
+            s = 0.0
+        scores["roof_pitch"] = s
+        total_weight += WEIGHTS["roof_pitch"]
+        if s == 1.0:
+            reasons.append(f"same roof pitch ({', '.join(sorted(rp_a))})")
+        elif s == 0.5:
+            reasons.append(f"partial roof pitch overlap ({', '.join(sorted(rp_a))} vs {', '.join(sorted(rp_b))})")
+        else:
+            reasons.append(f"different roof pitch ({', '.join(sorted(rp_a))} vs {', '.join(sorted(rp_b))})")
+
+    # truss_type
+    tt_a = _get_field_value(fields_a, "truss_type")
+    tt_b = _get_field_value(fields_b, "truss_type")
+    if tt_a is not None and tt_b is not None:
+        s = 1.0 if str(tt_a).strip().lower() == str(tt_b).strip().lower() else 0.0
+        scores["truss_type"] = s
+        total_weight += WEIGHTS["truss_type"]
+        if s == 1.0:
+            reasons.append(f"same truss type ({tt_a})")
+        else:
+            reasons.append(f"different truss type ({tt_a} vs {tt_b})")
+
+    # ridge_count
+    rc_a = _parse_number(_get_field_value(fields_a, "ridge_count"))
+    rc_b = _parse_number(_get_field_value(fields_b, "ridge_count"))
+    if rc_a is not None and rc_b is not None:
+        denom = max(rc_a, rc_b, 1)
+        s = max(0.0, 1.0 - abs(rc_a - rc_b) / denom)
+        scores["ridge_count"] = s
+        total_weight += WEIGHTS["ridge_count"]
+        diff = abs(rc_a - rc_b)
+        if diff == 0:
+            reasons.append(f"same ridge count ({int(rc_a)})")
+        else:
+            reasons.append(f"{int(diff)} {'fewer' if rc_a < rc_b else 'more'} ridges ({int(rc_a)} vs {int(rc_b)})")
+
+    # valley_count
+    vc_a = _parse_number(_get_field_value(fields_a, "valley_count"))
+    vc_b = _parse_number(_get_field_value(fields_b, "valley_count"))
+    if vc_a is not None and vc_b is not None:
+        denom = max(vc_a, vc_b, 1)
+        s = max(0.0, 1.0 - abs(vc_a - vc_b) / denom)
+        scores["valley_count"] = s
+        total_weight += WEIGHTS["valley_count"]
+        diff = abs(vc_a - vc_b)
+        if diff == 0:
+            reasons.append(f"same valley count ({int(vc_a)})")
+        else:
+            reasons.append(f"{int(diff)} {'fewer' if vc_a < vc_b else 'more'} valleys ({int(vc_a)} vs {int(vc_b)})")
+
+    # porch_or_addition
+    pa_a = _parse_bool_ish(_get_field_value(fields_a, "porch_or_addition"))
+    pa_b = _parse_bool_ish(_get_field_value(fields_b, "porch_or_addition"))
+    if pa_a is not None and pa_b is not None:
+        s = 1.0 if pa_a == pa_b else 0.0
+        scores["porch_or_addition"] = s
+        total_weight += WEIGHTS["porch_or_addition"]
+        if s == 1.0:
+            reasons.append(f"both {'have' if pa_a else 'lack'} porch/addition")
+        else:
+            reasons.append("different porch/addition")
+
+    # Compute final score
+    if total_weight == 0:
+        return {"score": 0, "reason": "No comparable fields between scans"}
+
+    weighted_sum = sum(scores[k] * WEIGHTS[k] for k in scores)
+    final = weighted_sum / total_weight
+    score_int = int(round(final * 100))
+
+    bdft_b = scan_b.get("bdft")
+    bdft_part = f" BDFT from this job: {bdft_b}" if bdft_b is not None else ""
+    reason = f"{score_int}% match — {', '.join(reasons)}.{bdft_part}"
+
+    return {"score": score_int, "reason": reason}
+
+
 def save_scan(filename: str, fields: dict) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     stem = Path(filename).stem

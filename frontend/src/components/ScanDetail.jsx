@@ -11,6 +11,8 @@ export default function ScanDetail() {
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [editingBdft, setEditingBdft] = useState(false);
   const [bdftValue, setBdftValue] = useState("");
+  const [matches, setMatches] = useState(null);
+  const [matchesLoading, setMatchesLoading] = useState(true);
 
   useEffect(() => {
     api
@@ -18,6 +20,11 @@ export default function ScanDetail() {
       .then(({ data }) => setScan(data))
       .catch(() => setError("Scan not found"))
       .finally(() => setLoading(false));
+    api
+      .get(`/scans/${id}/matches`)
+      .then(({ data }) => setMatches(data.matches))
+      .catch(() => setMatches([]))
+      .finally(() => setMatchesLoading(false));
   }, [id]);
 
   if (loading) {
@@ -176,6 +183,85 @@ export default function ScanDetail() {
         data={{ fields: scan.extraction_fields, filename: scan.filename }}
         readOnly
       />
+
+      {/* Similar Jobs */}
+      <div className="p-4 border-t border-gray-200 shrink-0">
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">Similar Jobs</h3>
+        {matchesLoading ? (
+          <p className="text-sm text-gray-400">Finding similar jobs...</p>
+        ) : matches && matches.length > 0 ? (
+          <>
+            <SuggestedBdftRange matches={matches} />
+            <div className="space-y-2 mt-3">
+              {matches.map((m) => (
+                <div
+                  key={m.scan_id}
+                  className="border border-gray-200 rounded-lg p-3"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Link
+                      to={`/scans/${m.scan_id}`}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                    >
+                      {m.filename}
+                    </Link>
+                    <span
+                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        m.score >= 80
+                          ? "bg-green-100 text-green-700"
+                          : m.score >= 60
+                          ? "bg-yellow-100 text-yellow-700"
+                          : "bg-red-100 text-red-700"
+                      }`}
+                    >
+                      {m.score}%
+                    </span>
+                    {m.bdft != null && (
+                      <span className="text-xs text-gray-500 ml-auto">
+                        BDFT: {m.bdft}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500">{m.reason}</p>
+                </div>
+              ))}
+            </div>
+            {matches.filter((m) => m.bdft != null).length < 3 && (
+              <p className="text-xs text-amber-600 mt-3">
+                Add BDFT to more saved scans to improve suggestions
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-gray-400">
+            No similar jobs found. Save more scans with BDFT values to see matches.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SuggestedBdftRange({ matches }) {
+  const withBdft = matches.filter((m) => m.bdft != null).slice(0, 3);
+  if (withBdft.length === 0) return null;
+
+  const totalWeight = withBdft.reduce((sum, m) => sum + m.score, 0);
+  if (totalWeight === 0) return null;
+
+  const weightedAvg =
+    withBdft.reduce((sum, m) => sum + m.bdft * m.score, 0) / totalWeight;
+
+  // Range: +/- 5% of weighted average, or at least 0.1
+  const spread = Math.max(weightedAvg * 0.05, 0.1);
+  const low = Math.max(0, weightedAvg - spread).toFixed(1);
+  const high = (weightedAvg + spread).toFixed(1);
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+      <span className="text-sm font-medium text-blue-800">
+        Suggested BDFT: {low} &ndash; {high}
+      </span>
     </div>
   );
 }
