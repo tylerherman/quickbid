@@ -50,6 +50,8 @@ EXTRACTION_FIELDS = {
     "ceiling_height": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "truss_type": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "porch_or_addition": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    "footprint_shape": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    "overall_span": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "notes": {"value": [], "confidence": "not_found", "reasoning": None, "source_page": None},
     "rooms": {
         "bedrooms": {"count": None, "total_sqft": None, "confidence": "not_found", "reasoning": None, "source_page": None},
@@ -282,6 +284,8 @@ DEFAULT_EXTRACTION_PROMPT = (
     "A value of 0 is a valid finding, not a missing value.\n"
     "- For overhang_depth: If elevations clearly show no overhang or a flush fascia, set value to 0 and confidence to extracted. "
     "Only use not_found if the pages were insufficient to determine whether an overhang exists.\n"
+    "- For footprint_shape: Classify the building footprint as one of: rectangular, L-shape, T-shape, U-shape, irregular. Look at the floor plan or roof plan view. If the building has a simple rectangle with no offsets or wings, use rectangular. If it has one offset wing, use L-shape. If it has two offset wings, use T-shape. If it wraps around a courtyard, use U-shape. Otherwise use irregular.\n"
+    "- For overall_span: The widest single truss span in the project — the largest clear-span dimension across the building width. Look for the widest dimension on the floor plan or framing plan, measured perpendicular to the ridge. Report in feet. If multiple spans exist, report the largest.\n"
     "- For truss_type: If the roof is clearly stick-framed with no trusses, set value to none and confidence to extracted. "
     "Only use not_found if the framing system could not be determined.\n"
     "- For rooms: The 'rooms' object contains bedrooms, bathrooms, kitchens, and garages. "

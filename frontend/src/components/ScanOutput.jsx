@@ -15,7 +15,16 @@ const FIELD_LABELS = {
   ceiling_height: "Ceiling Height",
   truss_type: "Truss Type",
   porch_or_addition: "Porch / Addition",
+  footprint_shape: "Footprint Shape",
+  overall_span: "Overall Span",
   notes: "Notes",
+};
+
+const formatSqft = (v) => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g, ""));
+  if (isNaN(n)) return String(v);
+  return n.toLocaleString();
 };
 
 const ARRAY_FIELDS = ["roof_pitch", "notes"];
@@ -201,7 +210,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="divide-y divide-gray-100">
           {Object.entries(fields)
-            .filter(([key]) => key !== "rooms")
+            .filter(([key]) => key !== "rooms" && key !== "sqft_detail")
             .map(([key, field]) => {
               const isArray = ARRAY_FIELDS.includes(key);
               const displayValue = isArray
@@ -294,6 +303,32 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
                 </div>
               );
             })}
+
+          {/* SQFT breakdown */}
+          {fields.sqft_detail && (() => {
+            const sd = fields.sqft_detail;
+            const rows = [
+              ["Conditioned SQFT", sd.conditioned?.value, sd.conditioned?.confidence],
+              ["Unconditioned SQFT", sd.unconditioned?.value, sd.unconditioned?.confidence],
+              ["Garage SQFT", sd.garage?.value, sd.garage?.confidence],
+            ].filter(([, v, c]) => v !== null && v !== undefined && v !== "" && c !== "not_found");
+            if (rows.length === 0) return null;
+            return (
+              <div className="p-4">
+                <label className="text-sm font-semibold text-gray-900 mb-3 block">
+                  SQFT Breakdown
+                </label>
+                <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+                  {rows.map(([label, v]) => (
+                    <div key={label} className="p-3 flex items-center justify-between">
+                      <span className="text-sm text-gray-700">{label}</span>
+                      <span className="text-sm font-medium text-gray-900">{formatSqft(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Rooms grouped card */}
           {fields.rooms && (

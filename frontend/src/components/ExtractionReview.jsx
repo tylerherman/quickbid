@@ -14,6 +14,8 @@ const FIELD_LABELS = {
   ceiling_height: "Ceiling Height",
   truss_type: "Truss Type",
   porch_or_addition: "Porch / Addition",
+  footprint_shape: "Footprint Shape",
+  overall_span: "Overall Span",
   notes: "Notes",
 };
 
@@ -143,7 +145,7 @@ export default function ExtractionReview({ data, onBack, onStartOver }) {
 
       {/* Fields form */}
       <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
-        {Object.entries(fields).map(([key, field]) => {
+        {Object.entries(fields).filter(([key]) => key !== "sqft_detail" && key !== "rooms").map(([key, field]) => {
           const isArray = ARRAY_FIELDS.includes(key);
           const displayValue = isArray
             ? Array.isArray(field.value)
