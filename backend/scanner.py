@@ -22,13 +22,22 @@ SCANS_DIR.mkdir(exist_ok=True)
 
 PAGE_TYPES = [
     "cover", "floor_plan", "roof_plan", "elevation", "framing_plan",
-    "site_plan", "detail", "schedule", "notes", "other",
+    "site_plan", "detail", "schedule", "notes", "project_stats", "other",
 ]
 
-PRIORITY_TYPES = ["framing_plan", "roof_plan", "elevation", "floor_plan"]
+PRIORITY_TYPES = ["project_stats", "framing_plan", "roof_plan", "elevation", "floor_plan"]
 
 EXTRACTION_FIELDS = {
     "square_footage": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    "sqft_detail": {
+        "total": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "conditioned": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "unconditioned": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "garage": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+        "floors": [],
+        "structures": [],
+        "line_items": []
+    },
     "building_type": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "building_dimensions": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "stories": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
@@ -108,6 +117,7 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
             "For each page, classify it as exactly one of: "
             f"{', '.join(PAGE_TYPES)}.\n\n"
             "Important classification rules:\n"
+            "- If a page contains any of the following — 'Project Statistics', 'Area Schedule', 'Square Footage', 'Living Space', 'Livable SF', 'Conditioned Space', 'Total Conditioned', 'Total Square', 'SQFT', or a table of room areas — label it project_stats. This takes priority over all other labels.\n"
             "- If a page contains a floor plan view of any kind — even if it also contains other views, schedules, or details — label it floor_plan. Do not label it detail if a floor plan is present.\n"
             "- If a page contains a roof framing plan or truss layout — even alongside other content — label it framing_plan.\n"
             "- Only label a page detail if it contains exclusively detail views, schedules, or notes with no plan views.\n\n"
@@ -166,6 +176,15 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
 
     pages = json.loads(text)
 
+    # First-match-wins: only keep the first project_stats page
+    found_stats_page = False
+    for p in sorted(pages, key=lambda x: x.get("page", 0)):
+        if p.get("label") == "project_stats":
+            if not found_stats_page:
+                found_stats_page = True
+            else:
+                p["label"] = "other"
+
     # Build lightbox images — render one page at a time at 150 DPI
     t_hires = time.time()
     full_data = []
@@ -219,12 +238,20 @@ DEFAULT_EXTRACTION_PROMPT = (
     "If it is a barn or agricultural building, use barn. Use the overall purpose and layout to determine the type. "
     "For room fields like bedrooms, bathrooms, and kitchens — if the building type is garage, barn, shop, or similar "
     "non-residential structure, set count to 0 and confidence to extracted rather than not_found.\n"
-    "- For square_footage: Look for a labeled area schedule, title block, or total square footage label on floor plan and cover pages. "
-    "If no total is explicitly labeled, calculate it by adding up all individual room and area dimensions visible on the floor plan pages. "
-    "List each room or area with its square footage in the reasoning field and show the sum. Sum all floors if multi-story. "
-    "Do not include garage square footage unless explicitly labeled as living area. "
-    "If calculated from room dimensions, set confidence to inferred. "
-    "Do not return not_found if room dimensions are visible — always attempt a calculation.\n"
+    "- For square_footage: This is the single most important field. Search every page — especially pages labeled project_stats, cover, or floor_plan — for any of these labels: 'Total Square Feet', 'Total Living Area', 'Livable SF', 'Conditioned Space', 'Total Conditioned Space', 'Area Schedule', 'Project Statistics', 'Square Footage', or any table of room areas.\n"
+    "Priority order: (1) Use an explicitly labeled total if found. (2) If there is an area schedule or project statistics table, sum the conditioned/heated rows. (3) If neither exists, calculate from individual room dimensions on the floor plan.\n"
+    "For conditioned SQFT: include all heated/livable areas (main floor, upper floors, finished basement). Exclude garage, unheated basement, porches, and decks unless explicitly labeled as conditioned.\n"
+    "Always return the conditioned total as the primary square_footage value. Set confidence to 'extracted' if read directly from a label, 'inferred' if calculated.\n"
+    "Do not return not_found if any room dimensions or area tables are visible — always attempt a calculation and show your math in reasoning.\n"
+    "- For sqft_detail: Extract a full SQFT breakdown from any area schedule, project statistics block, or floor plan.\n"
+    "  total: The total under-roof area including all structures, conditioned and unconditioned.\n"
+    "  conditioned: Heated/livable area only (exclude garage, unheated spaces, porches, decks).\n"
+    "  unconditioned: Garage, unheated basement, storage, shop, barn — any area that is not heated living space.\n"
+    "  garage: Garage square footage specifically, if broken out.\n"
+    "  floors: One entry per floor level found (e.g. Main Floor: 2,662 / Second Floor: 1,291 / Basement: 2,620). Include whether each floor is conditioned. Format: {\"label\": \"Main Floor\", \"sqft\": 2662, \"conditioned\": true}.\n"
+    "  structures: If the plan shows multiple separate buildings (e.g. main house + detached garage + shop), list each as a separate structure with its label and sqft. Format: {\"label\": \"Main House\", \"sqft\": 2400}.\n"
+    "  line_items: Copy every row from any area schedule or project statistics table verbatim — name and sqft value. Format: {\"name\": \"Main Floor Heated\", \"sqft\": 2372.3}. This is the raw source data.\n"
+    "  If no breakdown is available, leave arrays empty and set total/conditioned/unconditioned to not_found.\n"
     "- For ridge_count: Count every visible ridge line on the roof framing or roof plan. "
     "A ridge is a horizontal peak line where two roof slopes meet. Count each distinct ridge line as 1, "
     "including main ridges and any secondary ridges from wings, additions, or offsets. "
@@ -401,9 +428,17 @@ def compute_match_score(scan_a: dict, scan_b: dict) -> dict:
     reasons = []
     total_weight = 0.0
 
-    # square_footage
-    sf_a = _parse_number(_get_field_value(fields_a, "square_footage"))
-    sf_b = _parse_number(_get_field_value(fields_b, "square_footage"))
+    # square_footage — prefer sqft_detail.conditioned if available
+    def _preferred_sf(fields):
+        detail = fields.get("sqft_detail") or {}
+        cond = detail.get("conditioned") or {}
+        cond_val = cond.get("value") if isinstance(cond, dict) else None
+        if cond_val is not None:
+            return _parse_number(cond_val)
+        return _parse_number(_get_field_value(fields, "square_footage"))
+
+    sf_a = _preferred_sf(fields_a)
+    sf_b = _preferred_sf(fields_b)
     if sf_a is not None and sf_b is not None and sf_a > 0 and sf_b > 0:
         s = _numeric_proximity(sf_a, sf_b)
         scores["square_footage"] = s
