@@ -80,7 +80,7 @@ def _image_to_base64(img: Image.Image, max_width: int = 800, label: str = "") ->
 
 def crop_whitespace(img: Image.Image, padding: int = 20) -> Image.Image:
     arr = np.array(img.convert("RGB"))
-    mask = (arr < 240).any(axis=2)
+    mask = (arr < 250).any(axis=2)
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)
     if not rows.any() or not cols.any():
