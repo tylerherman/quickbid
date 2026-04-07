@@ -88,7 +88,7 @@ export default function CompareDrawer({ open, onClose, currentFields, currentJob
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute right-0 top-0 bottom-0 w-[480px] bg-white shadow-2xl flex flex-col">
+      <div className="absolute right-0 top-0 bottom-0 w-[640px] bg-white shadow-2xl flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-gray-200 shrink-0">
           <div className="flex items-start justify-between gap-3">
@@ -121,23 +121,27 @@ export default function CompareDrawer({ open, onClose, currentFields, currentJob
         </div>
 
         {/* Comparison table */}
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0 px-8 py-6">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 sticky top-0">
+            <thead className="bg-gray-50">
               <tr className="text-left text-xs text-gray-500 uppercase tracking-wide">
-                <th className="px-4 py-2 font-medium">Field</th>
-                <th className="px-2 py-2 font-medium">This Job</th>
-                <th className="px-2 py-2 font-medium">Matched</th>
-                <th className="px-2 py-2 font-medium w-8"></th>
+                <th className="px-3 py-2 font-medium" style={{ width: 200 }}>Field</th>
+                <th className="px-3 py-2 font-medium" style={{ minWidth: 80 }}>This Job</th>
+                <th className="px-3 py-2 font-medium" style={{ minWidth: 80 }}>Matched</th>
+                <th className="px-3 py-2 font-medium w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {rows.map((r) => (
                 <tr key={r.label}>
-                  <td className="px-4 py-2 text-gray-700 font-medium">{r.label}</td>
-                  <td className="px-2 py-2 text-gray-900">{r.a ?? <span className="text-gray-300">—</span>}</td>
-                  <td className="px-2 py-2 text-gray-900">{r.b ?? <span className="text-gray-300">—</span>}</td>
-                  <td className="px-2 py-2 text-center">{r.ind.icon}</td>
+                  <td className="px-3 py-2 text-gray-700 font-medium whitespace-nowrap">{r.label}</td>
+                  <td className="px-3 py-2 text-gray-900" style={{ minWidth: 80 }}>
+                    {r.a ?? <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-gray-900" style={{ minWidth: 80 }}>
+                    {r.b ?? <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-center">{r.ind.icon}</td>
                 </tr>
               ))}
             </tbody>

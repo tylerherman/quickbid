@@ -115,30 +115,37 @@ def _categorical_score(a, b) -> float:
     return 1.0 if str(a).strip().lower() == str(b).strip().lower() else 0.0
 
 
-def _score_for_type(a: dict, b: dict, bid_type: str) -> int:
+def _score_for_type(a: dict, b: dict, bid_type: str):
     weights = WEIGHTS[bid_type]
     total_weight = 0.0
     weighted_sum = 0.0
+    matched = 0
+    missing = 0
     for field, w in weights.items():
         va = a.get(field)
         vb = b.get(field)
-        if va is None or vb is None:
+        # Skip only when BOTH sides are missing
+        if (va is None or va == "") and (vb is None or vb == ""):
+            continue
+        total_weight += w
+        # If either side is missing, score this field as 0
+        if va is None or va == "" or vb is None or vb == "":
+            missing += 1
             continue
         if field in NUMERIC_FIELDS:
             s = _numeric_score(float(va), float(vb))
         else:
             s = _categorical_score(va, vb)
         weighted_sum += s * w
-        total_weight += w
+        matched += 1
     if total_weight == 0:
-        return 0
+        return 0, 0, 0
     raw = weighted_sum / total_weight
-    # Exact match always returns 100%; otherwise cap at MAX_CONFIDENCE
     if raw >= 0.9999:
         final = 1.0
     else:
         final = min(raw, MAX_CONFIDENCE[bid_type])
-    return int(round(final * 100))
+    return int(round(final * 100)), matched, missing
 
 
 def match_job(current_fields: dict, saved_scans: list) -> list:
@@ -148,11 +155,12 @@ def match_job(current_fields: dict, saved_scans: list) -> list:
     for scan in saved_scans:
         sid = scan.get("id")
         b = _extract_comparable(scan.get("extraction_fields") or {})
-        scores = {
-            "roof": _score_for_type(a, b, "roof"),
-            "walls": _score_for_type(a, b, "walls"),
-            "floors": _score_for_type(a, b, "floors"),
-        }
+        roof = _score_for_type(a, b, "roof")
+        walls = _score_for_type(a, b, "walls")
+        floors = _score_for_type(a, b, "floors")
+        scores = {"roof": roof[0], "walls": walls[0], "floors": floors[0]}
+        fields_matched = max(roof[1], walls[1], floors[1])
+        fields_missing = max(roof[2], walls[2], floors[2])
         results.append({
             "job_id": sid,
             "job_name": scan.get("filename") or "Untitled",
@@ -160,6 +168,8 @@ def match_job(current_fields: dict, saved_scans: list) -> list:
             "job_number": scan.get("job_number") or "",
             "bdft": scan.get("bdft"),
             "scores": scores,
+            "fields_matched": fields_matched,
+            "fields_missing": fields_missing,
             "extraction_fields": scan.get("extraction_fields") or {},
         })
     results.sort(key=lambda r: r["scores"]["roof"], reverse=True)
