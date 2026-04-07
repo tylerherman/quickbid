@@ -172,7 +172,7 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
 
     # Call Claude for classification
     t_api_start = time.time()
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=600.0)
     resp = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2048,
@@ -332,13 +332,15 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     content = []
     content.append({"type": "text", "text": prompt})
 
-    # Render and encode one page at a time at 150 DPI
+    # Render and encode one page at a time — higher DPI for small docs
+    render_dpi = 250 if total_pages <= 10 else 150
+    max_w = 2500 if total_pages <= 10 else 2000
     for pn in page_numbers:
         label = labels.get(pn, "unknown")
-        img = _convert_single_page(pdf_path, pn, dpi=150)
+        img = _convert_single_page(pdf_path, pn, dpi=render_dpi)
         if not img:
             continue
-        b64 = _image_to_base64(img, max_width=2000, label=f"pass2_claude_p{pn}")
+        b64 = _image_to_base64(img, max_width=max_w, label=f"pass2_claude_p{pn}")
         content.append({"type": "text", "text": f"--- Page {pn} ({label}) ---"})
         content.append({
             "type": "image",
@@ -351,7 +353,7 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     logger.info("extract_fields: 150dpi render+encode took %.1fs (RAM: %.0fMB)", t_render - t0, _mem_mb())
 
     t_api_start = time.time()
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=600.0)
     resp = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=8192,
