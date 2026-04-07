@@ -40,9 +40,12 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col">
       <header className="bg-white border-b border-gray-200 px-6 py-3 shrink-0 flex items-center justify-between">
-        <Link to="/" className="text-lg font-bold text-gray-900 hover:text-gray-700">
-          Quick Bid Scanner
-        </Link>
+        <div className="flex items-baseline">
+          <Link to="/" className="text-lg font-bold text-gray-900 hover:text-gray-700">
+            Quick Bid Scanner
+          </Link>
+          <span className="text-xs text-gray-400 ml-3">deployed Apr 7, 2026 10:45am</span>
+        </div>
         <Link
           to="/saved-scans"
           className="text-sm text-gray-600 hover:text-gray-900 font-medium"
