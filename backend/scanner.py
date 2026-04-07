@@ -204,15 +204,15 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
             else:
                 p["label"] = "other"
 
-    # Build lightbox images — render one page at a time at 150 DPI
+    # Build full-res images (used for both lightbox and extraction) at 300 DPI
     t_hires = time.time()
     full_data = []
     for pn in range(1, total_pages + 1):
-        img = _convert_single_page(pdf_path, pn, dpi=150)
+        img = _convert_single_page(pdf_path, pn, dpi=300)
         if not img:
             full_data.append("")
             continue
-        b64 = _image_to_base64(img, max_width=1200, label=f"lightbox_p{pn}")
+        b64 = _image_to_base64(img, max_width=2000, label=f"fullres_p{pn}")
         full_data.append(b64)
         del img
         gc.collect()
