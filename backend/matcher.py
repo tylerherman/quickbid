@@ -133,8 +133,12 @@ def _score_for_type(a: dict, b: dict, bid_type: str) -> int:
     if total_weight == 0:
         return 0
     raw = weighted_sum / total_weight
-    capped = raw * MAX_CONFIDENCE[bid_type]
-    return int(round(capped * 100))
+    # Exact match always returns 100%; otherwise cap at MAX_CONFIDENCE
+    if raw >= 0.9999:
+        final = 1.0
+    else:
+        final = min(raw, MAX_CONFIDENCE[bid_type])
+    return int(round(final * 100))
 
 
 def match_job(current_fields: dict, saved_scans: list) -> list:
@@ -156,6 +160,7 @@ def match_job(current_fields: dict, saved_scans: list) -> list:
             "job_number": scan.get("job_number") or "",
             "bdft": scan.get("bdft"),
             "scores": scores,
+            "extraction_fields": scan.get("extraction_fields") or {},
         })
     results.sort(key=lambda r: r["scores"]["roof"], reverse=True)
     return results

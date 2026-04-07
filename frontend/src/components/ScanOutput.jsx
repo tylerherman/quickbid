@@ -36,14 +36,19 @@ const ROOM_LABELS = {
   garages: "Garages",
 };
 
-export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, onSaved, readOnly = false, onFieldsChange }) {
+export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, onSaved, readOnly = false, onFieldsChange, bdft: bdftProp, onBdftChange, bdftHighlight = false }) {
   const [fields, setFields] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(null);
   const [savingToDb, setSavingToDb] = useState(false);
   const [savedToDb, setSavedToDb] = useState(false);
   const [error, setError] = useState(null);
-  const [bdft, setBdft] = useState("");
+  const [bdftLocal, setBdftLocal] = useState("");
+  const bdft = bdftProp !== undefined ? bdftProp : bdftLocal;
+  const setBdft = (v) => {
+    if (onBdftChange) onBdftChange(v);
+    else setBdftLocal(v);
+  };
 
   // Reset local state when new data arrives
   if (data?.fields && data.fields !== fields && !saving) {
@@ -455,7 +460,9 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
               step="0.01"
               value={bdft}
               onChange={(e) => setBdft(e.target.value)}
-              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              className={`w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-colors ${
+                bdftHighlight ? "border-yellow-400 bg-yellow-100" : "border-gray-200"
+              }`}
               placeholder="Enter the actual board feet per thousand for this job"
             />
             <p className="text-xs text-gray-400 mt-0.5">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import api from "../api";
+import CompareDrawer from "./CompareDrawer";
 
 const TYPES = ["roof", "walls", "floors"];
 
@@ -9,11 +10,12 @@ function badgeColor(score) {
   return "bg-red-100 text-red-700";
 }
 
-export default function SimilarProjects({ fields, onPickBdft }) {
+export default function SimilarProjects({ fields, currentJobName, onApplyBdft }) {
   const [selectedTypes, setSelectedTypes] = useState(["roof"]);
   const [matches, setMatches] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  const [drawerMatch, setDrawerMatch] = useState(null);
   const debounceRef = useRef(null);
 
   // Signature of key fields used for debounced re-fetch
@@ -129,7 +131,7 @@ export default function SimilarProjects({ fields, onPickBdft }) {
                   key={m.job_id}
                   onClick={() => {
                     setSelectedId(m.job_id);
-                    if (onPickBdft && m.bdft != null) onPickBdft(m.bdft);
+                    setDrawerMatch(m);
                   }}
                   className={`border rounded-lg p-3 cursor-pointer transition-colors ${
                     isSel
@@ -177,6 +179,15 @@ export default function SimilarProjects({ fields, onPickBdft }) {
           </div>
         )}
       </div>
+
+      <CompareDrawer
+        open={!!drawerMatch}
+        onClose={() => setDrawerMatch(null)}
+        currentFields={fields}
+        currentJobName={currentJobName}
+        match={drawerMatch}
+        onUseBdft={(v) => onApplyBdft?.(v)}
+      />
     </div>
   );
 }

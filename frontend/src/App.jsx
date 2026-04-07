@@ -16,6 +16,14 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState("");
   const [savedCount, setSavedCount] = useState(0);
+  const [bdft, setBdft] = useState("");
+  const [bdftHighlight, setBdftHighlight] = useState(false);
+
+  const applyBdft = (value) => {
+    setBdft(String(value));
+    setBdftHighlight(true);
+    setTimeout(() => setBdftHighlight(false), 1500);
+  };
   const location = useLocation();
 
   useEffect(() => {
@@ -45,7 +53,7 @@ export default function App() {
           <Link to="/" className="text-lg font-bold text-gray-900 hover:text-gray-700">
             Quick Bid Scanner
           </Link>
-          <span className="text-xs text-gray-400 ml-3">deployed Apr 7, 2026 1:15pm</span>
+          <span className="text-xs text-gray-400 ml-3">deployed Apr 7, 2026 3:30pm</span>
         </div>
         <Link
           to="/saved-scans"
@@ -82,10 +90,17 @@ export default function App() {
                   promptUsed={promptText}
                   thumbnailData={uploadResult?.thumbnails || []}
                   onSaved={refreshSavedCount}
+                  bdft={bdft}
+                  onBdftChange={setBdft}
+                  bdftHighlight={bdftHighlight}
                 />
               </div>
               <div className="w-1/3 flex flex-col min-h-0">
-                <SimilarProjects fields={extractionResult?.fields || null} />
+                <SimilarProjects
+                  fields={extractionResult?.fields || null}
+                  currentJobName={extractionResult?.filename || "Current Job"}
+                  onApplyBdft={applyBdft}
+                />
               </div>
             </div>
           }
