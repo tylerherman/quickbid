@@ -327,6 +327,7 @@ class SaveScanRequest(BaseModel):
 
 class UpdateScanRequest(BaseModel):
     bdft: Optional[float] = None
+    extraction_fields: Optional[Dict] = None
 
 
 @app.post("/scans/save")
@@ -409,6 +410,8 @@ async def update_scan(scan_id: str, req: UpdateScanRequest):
     updates = {}
     if req.bdft is not None:
         updates["bdft"] = req.bdft
+    if req.extraction_fields is not None:
+        updates["extraction_fields"] = req.extraction_fields
     if not updates:
         raise HTTPException(400, "No fields to update")
     try:

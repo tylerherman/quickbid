@@ -36,7 +36,7 @@ const ROOM_LABELS = {
   garages: "Garages",
 };
 
-export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, onSaved, readOnly = false }) {
+export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, onSaved, readOnly = false, onFieldsChange }) {
   const [fields, setFields] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(null);
@@ -65,27 +65,33 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
   }
 
   const updateValue = (key, value) => {
-    setFields((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], value },
-    }));
+    setFields((prev) => {
+      const next = { ...prev, [key]: { ...prev[key], value } };
+      if (onFieldsChange) onFieldsChange(next);
+      return next;
+    });
   };
 
   const updateConfidence = (key, confidence) => {
-    setFields((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], confidence },
-    }));
+    setFields((prev) => {
+      const next = { ...prev, [key]: { ...prev[key], confidence } };
+      if (onFieldsChange) onFieldsChange(next);
+      return next;
+    });
   };
 
   const updateRoomField = (roomType, fieldName, value) => {
-    setFields((prev) => ({
-      ...prev,
-      rooms: {
-        ...prev.rooms,
-        [roomType]: { ...prev.rooms[roomType], [fieldName]: value },
-      },
-    }));
+    setFields((prev) => {
+      const next = {
+        ...prev,
+        rooms: {
+          ...prev.rooms,
+          [roomType]: { ...prev.rooms[roomType], [fieldName]: value },
+        },
+      };
+      if (onFieldsChange) onFieldsChange(next);
+      return next;
+    });
   };
 
   // Confidence counting — include rooms sub-fields

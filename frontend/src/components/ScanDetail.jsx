@@ -13,6 +13,9 @@ export default function ScanDetail() {
   const [bdftValue, setBdftValue] = useState("");
   const [matches, setMatches] = useState(null);
   const [matchesLoading, setMatchesLoading] = useState(true);
+  const [editedFields, setEditedFields] = useState(null);
+  const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
+  const [saveError, setSaveError] = useState(null);
 
   useEffect(() => {
     api
@@ -50,6 +53,21 @@ export default function ScanDetail() {
       </div>
     );
   }
+
+  const handleSaveChanges = async () => {
+    if (!editedFields) return;
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      await api.patch(`/scans/${id}`, { extraction_fields: editedFields });
+      setScan((prev) => ({ ...prev, extraction_fields: editedFields }));
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 2000);
+    } catch (err) {
+      setSaveError(err.response?.data?.detail || "Save failed");
+      setSaveState("error");
+    }
+  };
 
   const saveBdft = async () => {
     const parsed = bdftValue !== "" ? parseFloat(bdftValue) : null;
@@ -178,10 +196,11 @@ export default function ScanDetail() {
         )}
       </div>
 
-      {/* Extraction results (read-only) */}
+      {/* Extraction results (editable) */}
       <ScanOutput
         data={{ fields: scan.extraction_fields, filename: scan.filename }}
         readOnly
+        onFieldsChange={(f) => setEditedFields(f)}
       />
 
       {/* Similar Jobs */}
@@ -237,6 +256,30 @@ export default function ScanDetail() {
             No similar jobs found. Save more scans with BDFT values to see matches.
           </p>
         )}
+      </div>
+
+      {/* Fixed save changes bar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 shadow-lg z-50">
+        <div className="flex items-center justify-end gap-3">
+          {saveState === "error" && saveError && (
+            <span className="text-sm text-red-600">{saveError}</span>
+          )}
+          {saveState === "saved" && (
+            <span className="flex items-center gap-1.5 text-sm text-green-600 font-medium">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+              Saved
+            </span>
+          )}
+          <button
+            onClick={handleSaveChanges}
+            disabled={!editedFields || saveState === "saving"}
+            className="px-5 py-2 rounded-lg font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+          >
+            {saveState === "saving" ? "Saving..." : "Save Changes"}
+          </button>
+        </div>
       </div>
     </div>
   );
