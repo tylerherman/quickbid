@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 import database
 import scanner
+import matcher
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -424,6 +425,22 @@ async def update_scan(scan_id: str, req: UpdateScanRequest):
     if not result:
         raise HTTPException(404, "Scan not found")
     return result
+
+
+class MatchRequest(BaseModel):
+    job: Dict
+
+
+@app.post("/api/match")
+async def api_match(req: MatchRequest):
+    try:
+        saved = database.get_all_scans()
+    except Exception as e:
+        logger.error("Fetch scans for /api/match failed: %s", e)
+        raise HTTPException(500, f"Fetch failed: {str(e)}")
+    fields = req.job.get("extraction_fields") or req.job.get("fields") or req.job
+    results = matcher.match_job(fields, saved)
+    return {"matches": results}
 
 
 @app.delete("/scans/{scan_id}")

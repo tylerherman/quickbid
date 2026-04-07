@@ -5,6 +5,7 @@ import ScanSetup from "./components/ScanSetup";
 import ScanOutput from "./components/ScanOutput";
 import SavedScans from "./components/SavedScans";
 import ScanDetail from "./components/ScanDetail";
+import SimilarProjects from "./components/SimilarProjects";
 
 export default function App() {
   const [uploadResult, setUploadResult] = useState(null);
@@ -59,7 +60,7 @@ export default function App() {
           path="/"
           element={
             <div className="flex flex-1 min-h-0">
-              <div className="w-1/2 border-r border-gray-200 flex flex-col min-h-0">
+              <div className="w-1/3 border-r border-gray-200 flex flex-col min-h-0">
                 <ScanSetup
                   uploadResult={uploadResult}
                   setUploadResult={setUploadResult}
@@ -74,7 +75,7 @@ export default function App() {
                   onResult={setExtractionResult}
                 />
               </div>
-              <div className="w-1/2 flex flex-col min-h-0">
+              <div className="w-1/3 border-r border-gray-200 flex flex-col min-h-0">
                 <ScanOutput
                   data={extractionResult}
                   uploadId={uploadResult?.upload_id}
@@ -82,6 +83,9 @@ export default function App() {
                   thumbnailData={uploadResult?.thumbnails || []}
                   onSaved={refreshSavedCount}
                 />
+              </div>
+              <div className="w-1/3 flex flex-col min-h-0">
+                <SimilarProjects fields={extractionResult?.fields || null} />
               </div>
             </div>
           }
