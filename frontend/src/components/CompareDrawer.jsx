@@ -58,30 +58,43 @@ function matchIndicator(a, b, numeric) {
 }
 
 const FIELD_DEFS = [
-  { label: "Square Footage", numeric: true, get: (f) => fv(f, "square_footage") },
-  { label: "Conditioned SQFT", numeric: true, get: (f) => sqftDetail(f, "conditioned") },
-  { label: "Unconditioned SQFT", numeric: true, get: (f) => sqftDetail(f, "unconditioned") },
-  { label: "Span", numeric: true, get: (f) => fv(f, "overall_span") },
-  { label: "Pitch", numeric: false, get: (f) => fv(f, "roof_pitch") },
-  { label: "Stories", numeric: true, get: (f) => fv(f, "stories") },
-  { label: "Building Type", numeric: false, get: (f) => fv(f, "building_type") },
-  { label: "Wall Height", numeric: true, get: (f) => fv(f, "ceiling_height") },
-  { label: "Truss Type", numeric: false, get: (f) => fv(f, "truss_type") },
-  { label: "Building Dimensions", numeric: false, get: (f) => fv(f, "building_dimensions") },
-  { label: "Bearing Conditions", numeric: false, get: (f) => fv(f, "bearing_conditions") },
+  { label: "Square Footage", key: "sqft", numeric: true, get: (f) => fv(f, "square_footage") },
+  { label: "Conditioned SQFT", key: null, numeric: true, get: (f) => sqftDetail(f, "conditioned") },
+  { label: "Unconditioned SQFT", key: null, numeric: true, get: (f) => sqftDetail(f, "unconditioned") },
+  { label: "Span", key: "span", numeric: true, get: (f) => fv(f, "overall_span") },
+  { label: "Pitch", key: "pitch", numeric: false, get: (f) => fv(f, "roof_pitch") },
+  { label: "Stories", key: "stories", numeric: true, get: (f) => fv(f, "stories") },
+  { label: "Building Type", key: "building_type", numeric: false, get: (f) => fv(f, "building_type") },
+  { label: "Wall Height", key: "wall_height", numeric: true, get: (f) => fv(f, "ceiling_height") },
+  { label: "Truss Type", key: "truss_type", numeric: false, get: (f) => fv(f, "truss_type") },
+  { label: "Footprint Shape", key: "footprint_shape", numeric: false, get: (f) => fv(f, "footprint_shape") },
+  { label: "Building Dimensions", key: null, numeric: false, get: (f) => fv(f, "building_dimensions") },
+  { label: "Bearing Conditions", key: "bearing_conditions", numeric: false, get: (f) => fv(f, "bearing_conditions") },
 ];
 
-export default function CompareDrawer({ open, onClose, currentFields, currentJobName, match, onUseBdft }) {
+export default function CompareDrawer({ open, onClose, currentFields, currentJobName, match, activeType = "roof", onUseBdft }) {
   const rows = useMemo(() => {
     if (!match) return [];
     const matched = match.extraction_fields || {};
+    const fieldScores = match.field_scores?.[activeType] || {};
     return FIELD_DEFS.map((fd) => {
       const a = fd.get(currentFields || {});
       const b = fd.get(matched);
       const ind = matchIndicator(a, b, fd.numeric);
-      return { label: fd.label, a, b, ind };
+      const fs = fd.key ? fieldScores[fd.key] : null;
+      return { label: fd.label, a, b, ind, fs, key: fd.key };
     });
-  }, [match, currentFields]);
+  }, [match, currentFields, activeType]);
+
+  const buildTooltip = (fs) => {
+    if (!fs) return null;
+    const header = fs.is_disqualifier
+      ? (fs.raw_score === 1.0
+          ? `Disqualifier field for ${activeType}`
+          : `Disqualifier — penalty applied`)
+      : `+${fs.weighted_contribution} pts to ${activeType.charAt(0).toUpperCase() + activeType.slice(1)} score`;
+    return { header, body: fs.reasoning };
+  };
 
   if (!open || !match) return null;
 
@@ -132,18 +145,32 @@ export default function CompareDrawer({ open, onClose, currentFields, currentJob
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {rows.map((r) => (
-                <tr key={r.label}>
-                  <td className="px-3 py-2 text-gray-700 font-medium whitespace-nowrap">{r.label}</td>
-                  <td className="px-3 py-2 text-gray-900" style={{ minWidth: 80 }}>
-                    {r.a ?? <span className="text-gray-400">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-gray-900" style={{ minWidth: 80 }}>
-                    {r.b ?? <span className="text-gray-400">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-center">{r.ind.icon}</td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const tip = buildTooltip(r.fs);
+                return (
+                  <tr key={r.label} className="group relative">
+                    <td className="px-3 py-2 text-gray-700 font-medium whitespace-nowrap">{r.label}</td>
+                    <td className="px-3 py-2 text-gray-900" style={{ minWidth: 80 }}>
+                      {r.a ?? <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-gray-900" style={{ minWidth: 80 }}>
+                      {r.b ?? <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-center relative">
+                      {r.ind.icon}
+                      {tip && (
+                        <div
+                          className="pointer-events-none absolute right-full top-1/2 -translate-y-1/2 mr-2 hidden group-hover:block z-10 bg-gray-900 text-white text-xs rounded-md px-3 py-2 shadow-lg"
+                          style={{ maxWidth: 280, width: "max-content" }}
+                        >
+                          <div className="font-medium mb-0.5">{tip.header}</div>
+                          <div className="text-gray-300">{tip.body}</div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

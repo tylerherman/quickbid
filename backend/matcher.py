@@ -146,45 +146,124 @@ def _categorical_score(a, b) -> float:
     return 1.0 if str(a).strip().lower() == str(b).strip().lower() else 0.0
 
 
+def _is_missing(v):
+    return v is None or v == "" or v == []
+
+
+def _numeric_reasoning(va, vb, raw_score):
+    diff = abs(float(va) - float(vb))
+    denom = max(abs(float(va)), abs(float(vb)))
+    pct = (diff / denom * 100) if denom else 0
+    if raw_score >= 0.9999:
+        return "Exact match"
+    pct_r = round(pct)
+    diff_r = round(diff, 1) if diff < 10 else int(round(diff))
+    if pct <= 10:
+        return f"Within {pct_r}% ({diff_r} unit difference)"
+    return f"{pct_r}% apart ({diff_r} unit difference) — low confidence"
+
+
 def _score_for_type(a: dict, b: dict, bid_type: str):
     weights = WEIGHTS[bid_type]
     total_weight = 0.0
     weighted_sum = 0.0
     matched = 0
     missing = 0
+    field_scores = {}
+
     for field, w in weights.items():
         if w == 0:
             continue
         va = a.get(field)
         vb = b.get(field)
-        # Skip only when BOTH sides are missing
-        if (va is None or va == "") and (vb is None or vb == ""):
+        a_missing = _is_missing(va)
+        b_missing = _is_missing(vb)
+
+        entry = {
+            "this_value": None if a_missing else va,
+            "matched_value": None if b_missing else vb,
+            "raw_score": 0.0,
+            "weighted_contribution": 0.0,
+            "reasoning": "",
+            "is_disqualifier": False,
+        }
+
+        if a_missing and b_missing:
+            entry["reasoning"] = "Not available in either job"
+            field_scores[field] = entry
             continue
+
         total_weight += w
-        # If either side is missing, score this field as 0
-        if va is None or va == "" or vb is None or vb == "":
+
+        if a_missing:
+            entry["reasoning"] = "Not found in this job"
             missing += 1
+            field_scores[field] = entry
             continue
+        if b_missing:
+            entry["reasoning"] = "Not recorded in matched job"
+            missing += 1
+            field_scores[field] = entry
+            continue
+
         if field in NUMERIC_FIELDS:
             s = _numeric_score(float(va), float(vb))
+            entry["reasoning"] = _numeric_reasoning(va, vb, s)
         else:
             s = _categorical_score(va, vb)
+            if s == 1.0:
+                entry["reasoning"] = "Exact match"
+            else:
+                entry["reasoning"] = f"No match — '{va}' vs '{vb}'"
+
+        entry["raw_score"] = round(s, 3)
+        entry["weighted_contribution"] = round(s * w * 100, 1)
         weighted_sum += s * w
         matched += 1
+        field_scores[field] = entry
+
     if total_weight == 0:
-        return 0, 0, 0
-    raw = weighted_sum / total_weight
-    if raw >= 0.9999:
-        final = 1.0
+        final_pct = 0
     else:
-        final = min(raw, MAX_CONFIDENCE[bid_type])
-    # Apply disqualifier multipliers when both sides present and mismatched
-    for dq_field, mult in DISQUALIFIERS.items():
-        va = a.get(dq_field)
-        vb = b.get(dq_field)
-        if va and vb and _categorical_score(va, vb) == 0.0:
-            final *= mult
-    return int(round(final * 100)), matched, missing
+        raw = weighted_sum / total_weight
+        if raw >= 0.9999:
+            final = 1.0
+        else:
+            final = min(raw, MAX_CONFIDENCE[bid_type])
+
+        # Apply disqualifier multipliers when both sides present and mismatched
+        for dq_field, mult in DISQUALIFIERS.items():
+            va = a.get(dq_field)
+            vb = b.get(dq_field)
+            dq_entry = {
+                "this_value": va if not _is_missing(va) else None,
+                "matched_value": vb if not _is_missing(vb) else None,
+                "raw_score": 0.0,
+                "weighted_contribution": 0.0,
+                "reasoning": "",
+                "is_disqualifier": True,
+            }
+            if _is_missing(va) and _is_missing(vb):
+                dq_entry["reasoning"] = "Not available in either job"
+            elif _is_missing(va):
+                dq_entry["reasoning"] = "Not found in this job"
+            elif _is_missing(vb):
+                dq_entry["reasoning"] = "Not recorded in matched job"
+            else:
+                if _categorical_score(va, vb) == 1.0:
+                    dq_entry["raw_score"] = 1.0
+                    dq_entry["reasoning"] = "Exact match — no penalty applied"
+                else:
+                    final *= mult
+                    pct_reduction = int(round((1 - mult) * 100))
+                    dq_entry["reasoning"] = (
+                        f"Mismatch — score penalized ×{mult:.2f} ({pct_reduction}% reduction)"
+                    )
+            field_scores[dq_field] = dq_entry
+
+        final_pct = int(round(final * 100))
+
+    return final_pct, matched, missing, field_scores
 
 
 def match_job(current_fields: dict, saved_scans: list) -> list:
@@ -198,6 +277,7 @@ def match_job(current_fields: dict, saved_scans: list) -> list:
         walls = _score_for_type(a, b, "walls")
         floors = _score_for_type(a, b, "floors")
         scores = {"roof": roof[0], "walls": walls[0], "floors": floors[0]}
+        field_scores = {"roof": roof[3], "walls": walls[3], "floors": floors[3]}
         fields_matched = max(roof[1], walls[1], floors[1])
         fields_missing = max(roof[2], walls[2], floors[2])
         results.append({
@@ -207,6 +287,7 @@ def match_job(current_fields: dict, saved_scans: list) -> list:
             "job_number": scan.get("job_number") or "",
             "bdft": scan.get("bdft"),
             "scores": scores,
+            "field_scores": field_scores,
             "fields_matched": fields_matched,
             "fields_missing": fields_missing,
             "extraction_fields": scan.get("extraction_fields") or {},

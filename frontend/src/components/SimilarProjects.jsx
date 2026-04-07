@@ -186,6 +186,7 @@ export default function SimilarProjects({ fields, currentJobName, onApplyBdft })
         currentFields={fields}
         currentJobName={currentJobName}
         match={drawerMatch}
+        activeType={TYPES.find((t) => selectedTypes.includes(t)) || "roof"}
         onUseBdft={(v) => onApplyBdft?.(v)}
       />
     </div>
