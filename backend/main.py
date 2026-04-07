@@ -231,10 +231,12 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
         total_pages = len(all_classifications)
 
         TYPE_LIMITS = {
+            "project_stats": 1,
             "framing_plan": 3,
+            "floor_plan": 4,
             "roof_plan": 2,
-            "elevation": 4,
-            "floor_plan": 3,
+            "detail": 2,
+            "elevation": 2,
         }
 
         by_type = defaultdict(list)
@@ -255,7 +257,7 @@ async def scan_with_prompt(req: ScanWithPromptRequest):
             for p in by_type[page_type][limit:]:
                 leftovers.append(p)
 
-        priority_order = ["framing_plan", "roof_plan", "elevation", "floor_plan"]
+        priority_order = ["project_stats", "framing_plan", "floor_plan", "roof_plan", "detail", "elevation"]
         leftovers.sort(key=lambda p: (priority_order.index(p["label"]) if p["label"] in priority_order else 99, p["page"]))
 
         for p in leftovers:
