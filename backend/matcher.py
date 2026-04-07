@@ -3,28 +3,47 @@ from __future__ import annotations
 
 WEIGHTS = {
     "roof": {
-        "span": 0.30,
-        "pitch": 0.25,
-        "sqft": 0.15,
+        "span": 0.33,
+        "pitch": 0.28,
+        "sqft": 0.11,
         "stories": 0.05,
-        "building_type": 0.15,
-        "truss_type": 0.10,
+        "truss_type": 0.11,
+        "bedrooms": 0.04,
+        "bathrooms": 0.03,
+        "garage": 0.02,
+        "wall_height": 0.00,
+        "bearing_conditions": 0.00,
     },
     "walls": {
-        "span": 0.05,
-        "sqft": 0.20,
-        "stories": 0.30,
-        "building_type": 0.15,
-        "wall_height": 0.30,
+        "span": 0.06,
+        "sqft": 0.12,
+        "stories": 0.18,
+        "wall_height": 0.24,
+        "bedrooms": 0.12,
+        "bathrooms": 0.06,
+        "garage": 0.12,
+        "pitch": 0.00,
+        "truss_type": 0.00,
+        "bearing_conditions": 0.00,
     },
     "floors": {
-        "span": 0.25,
-        "sqft": 0.20,
-        "stories": 0.25,
-        "building_type": 0.15,
-        "truss_type": 0.10,
-        "bearing_conditions": 0.05,
+        "span": 0.28,
+        "sqft": 0.12,
+        "stories": 0.17,
+        "truss_type": 0.11,
+        "bedrooms": 0.12,
+        "bathrooms": 0.06,
+        "garage": 0.06,
+        "bearing_conditions": 0.08,
+        "pitch": 0.00,
+        "wall_height": 0.00,
     },
+}
+
+# Applied as multipliers to the final score AFTER weighted scoring
+DISQUALIFIERS = {
+    "building_type": 0.30,   # mismatch = score × 0.30
+    "footprint_shape": 0.50,  # mismatch = score × 0.50
 }
 
 MAX_CONFIDENCE = {
@@ -33,8 +52,8 @@ MAX_CONFIDENCE = {
     "floors": 0.90,
 }
 
-NUMERIC_FIELDS = {"span", "sqft", "stories", "wall_height", "pitch"}
-CATEGORICAL_FIELDS = {"building_type", "truss_type", "bearing_conditions"}
+NUMERIC_FIELDS = {"span", "sqft", "stories", "wall_height", "pitch", "bedrooms", "bathrooms", "garage"}
+CATEGORICAL_FIELDS = {"building_type", "truss_type", "bearing_conditions", "footprint_shape"}
 
 
 def _to_number(v):
@@ -90,6 +109,14 @@ def _extract_comparable(fields: dict) -> dict:
     if sqft is None:
         sqft = _to_number(_field_value(fields, "square_footage"))
 
+    # Pull bedroom/bathroom/garage counts from nested rooms object
+    rooms = fields.get("rooms") or {}
+    def _room_count(name):
+        r = rooms.get(name)
+        if isinstance(r, dict):
+            return _to_number(r.get("count"))
+        return None
+
     return {
         "span": _to_number(_field_value(fields, "overall_span")),
         "pitch": _to_number(_field_value(fields, "roof_pitch")),
@@ -98,6 +125,10 @@ def _extract_comparable(fields: dict) -> dict:
         "wall_height": _to_number(_field_value(fields, "ceiling_height")),
         "building_type": _field_value(fields, "building_type"),
         "truss_type": _field_value(fields, "truss_type"),
+        "footprint_shape": _field_value(fields, "footprint_shape"),
+        "bedrooms": _room_count("bedrooms"),
+        "bathrooms": _room_count("bathrooms"),
+        "garage": _room_count("garages"),
         "bearing_conditions": None,  # not in current schema
     }
 
@@ -122,6 +153,8 @@ def _score_for_type(a: dict, b: dict, bid_type: str):
     matched = 0
     missing = 0
     for field, w in weights.items():
+        if w == 0:
+            continue
         va = a.get(field)
         vb = b.get(field)
         # Skip only when BOTH sides are missing
@@ -145,6 +178,12 @@ def _score_for_type(a: dict, b: dict, bid_type: str):
         final = 1.0
     else:
         final = min(raw, MAX_CONFIDENCE[bid_type])
+    # Apply disqualifier multipliers when both sides present and mismatched
+    for dq_field, mult in DISQUALIFIERS.items():
+        va = a.get(dq_field)
+        vb = b.get(dq_field)
+        if va and vb and _categorical_score(va, vb) == 0.0:
+            final *= mult
     return int(round(final * 100)), matched, missing
 
 
