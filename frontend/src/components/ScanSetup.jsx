@@ -238,7 +238,7 @@ export default function ScanSetup({
               {thumbnails.map((thumb, i) => {
                 const cls = classifications.find((c) => c.page === i + 1);
                 const label = cls?.label;
-                const isPriority = cls?.is_priority;
+                const isPriority = cls?.is_priority || i === 0 || i === 1;
                 return (
                   <div
                     key={i}
