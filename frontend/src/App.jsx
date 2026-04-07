@@ -44,7 +44,7 @@ export default function App() {
           <Link to="/" className="text-lg font-bold text-gray-900 hover:text-gray-700">
             Quick Bid Scanner
           </Link>
-          <span className="text-xs text-gray-400 ml-3">deployed Apr 7, 2026 10:45am</span>
+          <span className="text-xs text-gray-400 ml-3">deployed Apr 7, 2026 11:00am</span>
         </div>
         <Link
           to="/saved-scans"

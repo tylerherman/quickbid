@@ -117,7 +117,7 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
             "For each page, classify it as exactly one of: "
             f"{', '.join(PAGE_TYPES)}.\n\n"
             "Important classification rules:\n"
-            "- If a page contains any of the following — 'Project Statistics', 'Area Schedule', 'Square Footage', 'Living Space', 'Livable SF', 'Conditioned Space', 'Total Conditioned', 'Total Square', 'SQFT', or a table of room areas — label it project_stats. This takes priority over all other labels.\n"
+            "- If a page contains any of the following — 'Project Statistics', 'Area Schedule', 'Square Footage', 'Living Space', 'Livable SF', 'Conditioned Space', 'Total Conditioned', 'Total Square', 'SQFT', 'Building Area', 'Building Areas', or a table of room areas — label it project_stats. This takes priority over all other labels.\n"
             "- If a page contains a floor plan view of any kind — even if it also contains other views, schedules, or details — label it floor_plan. Do not label it detail if a floor plan is present.\n"
             "- If a page contains a roof framing plan or truss layout — even alongside other content — label it framing_plan.\n"
             "- Only label a page detail if it contains exclusively detail views, schedules, or notes with no plan views.\n\n"
@@ -286,6 +286,12 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     mem_start = _mem_mb()
     page_numbers = [p["page"] for p in page_selections]
     labels = {p["page"]: p["label"] for p in page_selections}
+
+    # Always include pages 1 and 2 — title block / area schedule is almost always on one of the first two sheets
+    for forced_page in [1, 2]:
+        if forced_page not in page_numbers:
+            page_numbers = [forced_page] + page_numbers
+            labels[forced_page] = "cover"
 
     logger.info("extract_fields: %d pages, starting (RAM: %.0fMB)", len(page_numbers), mem_start)
 
