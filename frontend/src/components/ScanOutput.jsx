@@ -80,6 +80,22 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
     });
   };
 
+  const updateSqftDetail = (subKey, value) => {
+    setFields((prev) => {
+      const prevDetail = prev.sqft_detail || {};
+      const prevSub = prevDetail[subKey] || { value: null, confidence: "not_found", reasoning: null, source_page: null };
+      const next = {
+        ...prev,
+        sqft_detail: {
+          ...prevDetail,
+          [subKey]: { ...prevSub, value },
+        },
+      };
+      if (onFieldsChange) onFieldsChange(next);
+      return next;
+    });
+  };
+
   const updateRoomField = (roomType, fieldName, value) => {
     setFields((prev) => {
       const next = {
@@ -279,6 +295,34 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
                           }
                         />
                       )}
+                      {key === "square_footage" && (
+                        <div className="mt-2 flex gap-2">
+                          <div className="flex-1">
+                            <label className="text-[11px] text-gray-400 uppercase tracking-wide">
+                              Conditioned
+                            </label>
+                            <input
+                              type="text"
+                              value={fields.sqft_detail?.conditioned?.value ?? ""}
+                              onChange={(e) => updateSqftDetail("conditioned", e.target.value || null)}
+                              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                              placeholder="-"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="text-[11px] text-gray-400 uppercase tracking-wide">
+                              Unconditioned
+                            </label>
+                            <input
+                              type="text"
+                              value={fields.sqft_detail?.unconditioned?.value ?? fields.sqft_detail?.garage?.value ?? ""}
+                              onChange={(e) => updateSqftDetail("unconditioned", e.target.value || null)}
+                              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                              placeholder="-"
+                            />
+                          </div>
+                        </div>
+                      )}
                       {field.reasoning && (
                         <div className="mt-1.5">
                           <p className="text-sm text-gray-500">
@@ -309,32 +353,6 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
                 </div>
               );
             })}
-
-          {/* SQFT breakdown */}
-          {fields.sqft_detail && (() => {
-            const sd = fields.sqft_detail;
-            const rows = [
-              ["Conditioned SQFT", sd.conditioned?.value, sd.conditioned?.confidence],
-              ["Unconditioned SQFT", sd.unconditioned?.value, sd.unconditioned?.confidence],
-              ["Garage SQFT", sd.garage?.value, sd.garage?.confidence],
-            ].filter(([, v, c]) => v !== null && v !== undefined && v !== "" && c !== "not_found");
-            if (rows.length === 0) return null;
-            return (
-              <div className="p-4">
-                <label className="text-sm font-semibold text-gray-900 mb-3 block">
-                  SQFT Breakdown
-                </label>
-                <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
-                  {rows.map(([label, v]) => (
-                    <div key={label} className="p-3 flex items-center justify-between">
-                      <span className="text-sm text-gray-700">{label}</span>
-                      <span className="text-sm font-medium text-gray-900">{formatSqft(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
 
           {/* Rooms grouped card */}
           {fields.rooms && (
