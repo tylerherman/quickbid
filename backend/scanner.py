@@ -287,11 +287,22 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     page_numbers = [p["page"] for p in page_selections]
     labels = {p["page"]: p["label"] for p in page_selections}
 
-    # Always include pages 1 and 2 — title block / area schedule is almost always on one of the first two sheets
-    for forced_page in [1, 2]:
-        if forced_page not in page_numbers:
-            page_numbers = [forced_page] + page_numbers
-            labels[forced_page] = "cover"
+    total_pages = _get_page_count(pdf_path)
+
+    if total_pages <= 10:
+        # Small doc — scan everything
+        page_numbers = list(range(1, total_pages + 1))
+        for p in page_numbers:
+            if p not in labels:
+                labels[p] = "unknown"
+    else:
+        # Large doc — use priority selection, but always force pages 1 and 2
+        for forced_page in [1, 2]:
+            if forced_page not in page_numbers:
+                page_numbers = [forced_page] + page_numbers
+                labels[forced_page] = "cover"
+
+    page_numbers = sorted(page_numbers)
 
     logger.info("extract_fields: %d pages, starting (RAM: %.0fMB)", len(page_numbers), mem_start)
 
