@@ -163,13 +163,21 @@ export default function ScanSetup({
               timeout: 15000,
             });
             if (status.status === "complete") {
-              onResult(status.result);
+              try {
+                if (!status.result || !status.result.fields) {
+                  throw new Error("empty");
+                }
+                onResult(status.result);
+              } catch {
+                setError("Scan failed: Server returned an empty response. The file may be too large to process.");
+              }
               setScanning(false);
               setScanStatus("");
               return;
             }
             if (status.status === "error") {
-              setError(status.error || "Extraction failed");
+              const errMsg = status.error || "Unknown error";
+              setError(`Scan failed: ${errMsg}. This may be due to a large file — try a smaller file or contact support.`);
               setScanning(false);
               setScanStatus("");
               return;
@@ -191,9 +199,13 @@ export default function ScanSetup({
       };
       await poll();
     } catch (err) {
-      const msg = err.response?.data?.detail || err.message || "Scan failed";
       console.error("Scan error:", err.response?.data || err);
-      setError(msg);
+      const detail = err.response?.data?.detail;
+      if (detail) {
+        setError(`Scan failed: ${detail}. This may be due to a large file — try a smaller file or contact support.`);
+      } else {
+        setError("Scan failed: Server returned an empty response. The file may be too large to process.");
+      }
       setScanning(false);
       setScanStatus("");
     }
