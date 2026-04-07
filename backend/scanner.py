@@ -341,6 +341,7 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
         img = _convert_single_page(pdf_path, pn, dpi=render_dpi)
         if not img:
             continue
+        logger.info("extract_fields: page %d — dpi=%d max_w=2000 img_size=%s", pn, render_dpi, img.size)
         b64 = _image_to_base64(img, max_width=max_w, label=f"pass2_claude_p{pn}")
         content.append({"type": "text", "text": f"--- Page {pn} ({label}) ---"})
         content.append({
