@@ -333,10 +333,11 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     content.append({"type": "text", "text": prompt})
 
     # Render and encode one page at a time — higher DPI for small docs
-    render_dpi = 250 if total_pages <= 10 else 150
-    max_w = 2500 if total_pages <= 10 else 2000
+    render_dpi = 300 if total_pages <= 10 else 150
+    max_w = 2000 if total_pages <= 10 else 2000
     for pn in page_numbers:
         label = labels.get(pn, "unknown")
+        logger.info("extract_fields: rendering page %d at %d DPI (total_pages=%d)", pn, render_dpi, total_pages)
         img = _convert_single_page(pdf_path, pn, dpi=render_dpi)
         if not img:
             continue
