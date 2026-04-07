@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from pdf2image import convert_from_path
 from PIL import Image
+import numpy as np
 
 import psutil
 
@@ -77,13 +78,31 @@ def _image_to_base64(img: Image.Image, max_width: int = 800, label: str = "") ->
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
+def crop_whitespace(img: Image.Image, padding: int = 20) -> Image.Image:
+    arr = np.array(img.convert("RGB"))
+    mask = (arr < 240).any(axis=2)
+    rows = np.any(mask, axis=1)
+    cols = np.any(mask, axis=0)
+    if not rows.any() or not cols.any():
+        return img
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+    rmin = max(0, rmin - padding)
+    rmax = min(arr.shape[0], rmax + padding)
+    cmin = max(0, cmin - padding)
+    cmax = min(arr.shape[1], cmax + padding)
+    return img.crop((cmin, rmin, cmax, rmax))
+
+
 def _convert_single_page(pdf_path: str, page_num: int, dpi: int) -> Image.Image:
     """Convert a single PDF page to PIL Image."""
     pages = convert_from_path(
         pdf_path, dpi=dpi, fmt="jpeg",
         first_page=page_num, last_page=page_num,
     )
-    return pages[0] if pages else None
+    if not pages:
+        return None
+    return crop_whitespace(pages[0])
 
 
 def _save_debug_log(filename: str, pass_name: str, response_text: str):
@@ -225,6 +244,7 @@ DEFAULT_EXTRACTION_PROMPT = (
     "Confidence levels:\n"
     "- \"extracted\": value was directly read from the plan\n"
     "- \"inferred\": value was reasoned from context\n"
+    "- \"unclear\": value is partially visible or legible but could not be read with certainty\n"
     "- \"not_found\": value could not be determined\n\n"
     "For each field:\n"
     "- \"reasoning\": A 1-2 sentence plain English explanation of what you saw and why you assigned that value. "
@@ -243,6 +263,7 @@ DEFAULT_EXTRACTION_PROMPT = (
     "For conditioned SQFT: include all heated/livable areas (main floor, upper floors, finished basement). Exclude garage, unheated basement, porches, and decks unless explicitly labeled as conditioned.\n"
     "Always return the conditioned total as the primary square_footage value. Set confidence to 'extracted' if read directly from a label, 'inferred' if calculated.\n"
     "Do not return not_found if any room dimensions or area tables are visible — always attempt a calculation and show your math in reasoning.\n"
+    "If you can see an area schedule or table but the numbers are too small or blurry to read with certainty, set confidence to 'unclear' and describe what you saw in reasoning. Never guess a number — unclear is better than a wrong value.\n"
     "- For sqft_detail: Extract a full SQFT breakdown from any area schedule, project statistics block, or floor plan.\n"
     "  total: The total under-roof area including all structures, conditioned and unconditioned.\n"
     "  conditioned: Heated/livable area only (exclude garage, unheated spaces, porches, decks).\n"
