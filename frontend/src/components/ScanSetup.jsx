@@ -30,6 +30,8 @@ export default function ScanSetup({
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  const [isOverloaded, setIsOverloaded] = useState(false);
+  const [lastFailed, setLastFailed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [savedPrompts, setSavedPrompts] = useState(loadSavedPrompts);
@@ -88,6 +90,8 @@ export default function ScanSetup({
     }
     setUploading(true);
     setError(null);
+    setIsOverloaded(false);
+    setLastFailed(false);
     setScanStatus("Uploading PDF...");
     try {
       const form = new FormData();
@@ -113,7 +117,14 @@ export default function ScanSetup({
             break;
           }
           if (status.status === "error") {
-            setError(status.error || "Classification failed");
+            if (status.error_code === 529 || status.error === "overloaded") {
+              setIsOverloaded(true);
+              setError("AI capacity is limited right now. We've queued a retry...");
+              setLastFailed(true);
+            } else {
+              setError(status.error || "Classification failed");
+              setLastFailed(true);
+            }
             break;
           }
           // Rotate status messages
@@ -144,6 +155,8 @@ export default function ScanSetup({
     setScanning(true);
     setScanStatus("Starting extraction...");
     setError(null);
+    setIsOverloaded(false);
+    setLastFailed(false);
     try {
       const { data } = await api.post("/scan-with-prompt", {
         upload_id: uploadResult.upload_id,
@@ -176,8 +189,14 @@ export default function ScanSetup({
               return;
             }
             if (status.status === "error") {
-              const errMsg = status.error || "Unknown error";
-              setError(`Scan failed: ${errMsg}. This may be due to a large file — try a smaller file or contact support.`);
+              if (status.error_code === 529 || status.error === "overloaded") {
+                setIsOverloaded(true);
+                setError("AI capacity is limited right now. We've queued a retry...");
+              } else {
+                const errMsg = status.error || "Unknown error";
+                setError(`Scan failed: ${errMsg}. This may be due to a large file — try a smaller file or contact support.`);
+              }
+              setLastFailed(true);
               setScanning(false);
               setScanStatus("");
               return;
@@ -445,12 +464,31 @@ export default function ScanSetup({
       {/* Error + Run button */}
       <div className="p-4 border-t border-gray-200 shrink-0">
         {error && (
-          <p className="text-red-600 text-sm mb-3">{error}</p>
+          <div className={`text-sm mb-3 rounded-lg px-3 py-2 ${
+            isOverloaded
+              ? "bg-amber-50 border border-amber-300 text-amber-800"
+              : "bg-red-50 border border-red-200 text-red-700"
+          }`}>
+            <p>{error}</p>
+            {lastFailed && !scanning && (
+              <button
+                onClick={handleRunScan}
+                disabled={!uploadResult}
+                className="mt-2 text-xs font-medium px-3 py-1 rounded bg-white border border-current hover:opacity-80 transition-opacity"
+              >
+                Retry
+              </button>
+            )}
+          </div>
         )}
         <button
           onClick={handleRunScan}
           disabled={!uploadResult || scanning || uploading}
-          className="w-full py-3 rounded-lg font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          className={`w-full py-3 rounded-lg font-medium text-white transition-colors ${
+            lastFailed && !scanning && !uploading
+              ? "bg-blue-600 hover:bg-blue-700 border-2 border-orange-400"
+              : "bg-blue-600 hover:bg-blue-700 border-2 border-transparent"
+          } disabled:bg-gray-300 disabled:cursor-not-allowed disabled:border-transparent`}
         >
           {scanning ? (
             <span className="flex items-center justify-center gap-2">
@@ -498,6 +536,8 @@ export default function ScanSetup({
               </svg>
               Classifying pages...
             </span>
+          ) : lastFailed ? (
+            "Retry Scan"
           ) : (
             "Run Scan"
           )}

@@ -90,8 +90,11 @@ def _run_classification(job_id: str, upload_id: str, pdf_path: str, filename: st
             "error": None,
         })
     except anthropic.APIStatusError as e:
-        logger.error("Anthropic API error: %s", e.message)
-        _write_job(job_id, {"status": "error", "result": None, "error": f"Anthropic API error: {e.message}"})
+        logger.error("Anthropic API error (classification): status=%s %s", e.status_code, e.message)
+        if e.status_code == 529:
+            _write_job(job_id, {"status": "error", "result": None, "error": "overloaded", "error_code": 529})
+        else:
+            _write_job(job_id, {"status": "error", "result": None, "error": f"Anthropic API error: {e.message}"})
     except Exception as e:
         logger.error("Classification failed: %s\n%s", e, traceback.format_exc())
         _write_job(job_id, {"status": "error", "result": None, "error": f"Classification failed: {str(e)}"})
@@ -141,7 +144,9 @@ async def extract_data(req: ExtractRequest):
             info["path"], info["filename"], req.page_selections
         )
     except anthropic.APIStatusError as e:
-        logger.error("Anthropic API error: %s", e.message)
+        logger.error("Anthropic API error: status=%s %s", e.status_code, e.message)
+        if e.status_code == 529:
+            raise HTTPException(529, "AI services are currently busy. Please wait a moment and try again.")
         raise HTTPException(e.status_code, f"Anthropic API error: {e.message}")
     except Exception as e:
         logger.error("Extraction failed: %s\n%s", e, traceback.format_exc())
@@ -206,8 +211,11 @@ def _run_extraction(job_id: str, upload_id: str, info: dict, selections: list, p
             "error": None,
         })
     except anthropic.APIStatusError as e:
-        logger.error("Anthropic API error: %s", e.message)
-        _write_job(job_id, {"status": "error", "result": None, "error": f"Anthropic API error: {e.message}"})
+        logger.error("Anthropic API error (extraction): status=%s %s", e.status_code, e.message)
+        if e.status_code == 529:
+            _write_job(job_id, {"status": "error", "result": None, "error": "overloaded", "error_code": 529})
+        else:
+            _write_job(job_id, {"status": "error", "result": None, "error": f"Anthropic API error: {e.message}"})
     except Exception as e:
         logger.error("Extraction failed: %s\n%s", e, traceback.format_exc())
         _write_job(job_id, {"status": "error", "result": None, "error": f"Extraction failed: {str(e)}"})
@@ -309,6 +317,7 @@ async def get_scan_status(job_id: str):
         "status": job["status"],
         "result": job.get("result"),
         "error": job.get("error"),
+        "error_code": job.get("error_code"),
     }
 
 

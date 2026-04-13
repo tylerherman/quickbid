@@ -172,14 +172,26 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
     t_render = time.time()
     logger.info("classify_pages: 72dpi render+encode took %.1fs (RAM: %.0fMB)", t_render - t0, _mem_mb())
 
-    # Call Claude for classification
+    # Call Claude for classification (with retry on overload)
     t_api_start = time.time()
     client = anthropic.Anthropic(timeout=600.0)
-    resp = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": content}],
-    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": content}],
+        )
+    except anthropic.APIStatusError as e:
+        if e.status_code == 529:
+            logger.warning("classify_pages: 529 Overloaded — retrying in 2s")
+            time.sleep(2)
+            resp = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": content}],
+            )
+        else:
+            raise
     t_api_end = time.time()
     logger.info("classify_pages: Claude API call took %.1fs", t_api_end - t_api_start)
 
@@ -242,69 +254,29 @@ def classify_pages(pdf_path: str, filename: str) -> dict:
 
 
 DEFAULT_EXTRACTION_PROMPT = (
-    "I'm sending you high-resolution construction plan pages. "
-    "Extract the following fields from these pages. For each field, provide a value, "
-    "a confidence level, a reasoning explanation, and the source page.\n\n"
-    "Confidence levels:\n"
-    "- \"extracted\": value was directly read from the plan\n"
-    "- \"inferred\": value was reasoned from context\n"
-    "- \"unclear\": value is partially visible or legible but could not be read with certainty\n"
-    "- \"not_found\": value could not be determined\n\n"
-    "For each field:\n"
-    "- \"reasoning\": A 1-2 sentence plain English explanation of what you saw and why you assigned that value. "
-    "Example: \"Found '1,135 sq ft' labeled as 'Total Living Area' in the building area schedule on the title sheet.\"\n"
-    "- \"source_page\": The page number and label where the data was found, e.g. \"Page 1 (cover)\" or \"Page 3 (framing_plan)\". "
-    "If inferred, explain which pages were used. If not found, explain what was looked for and where.\n\n"
-    "Field-specific guidance:\n"
-    "- For building_type: Classify the overall building type as one of: single_family, garage, barn, shop, duplex, "
-    "multi_family, commercial, addition, or unknown. Look at the cover page, title block, and overall plan layout. "
-    "If it is clearly a detached garage or accessory structure with no living space, use garage. "
-    "If it is a barn or agricultural building, use barn. Use the overall purpose and layout to determine the type. "
-    "For room fields like bedrooms, bathrooms, and kitchens — if the building type is garage, barn, shop, or similar "
-    "non-residential structure, set count to 0 and confidence to extracted rather than not_found.\n"
-    "- For square_footage: This is the single most important field. Search every page — especially pages labeled project_stats, cover, or floor_plan — for any of these labels: 'Total Square Feet', 'Total Living Area', 'Livable SF', 'Conditioned Space', 'Total Conditioned Space', 'Area Schedule', 'Project Statistics', 'Square Footage', or any table of room areas.\n"
-    "Priority order: (1) Use an explicitly labeled total if found. (2) If there is an area schedule or project statistics table, sum the conditioned/heated rows. (3) If neither exists, calculate from individual room dimensions on the floor plan.\n"
-    "For conditioned SQFT: include all heated/livable areas (main floor, upper floors, finished basement). Exclude garage, unheated basement, porches, and decks unless explicitly labeled as conditioned.\n"
-    "Always return the conditioned total as the primary square_footage value. Set confidence to 'extracted' if read directly from a label, 'inferred' if calculated.\n"
-    "Do not return not_found if any room dimensions or area tables are visible — always attempt a calculation and show your math in reasoning.\n"
-    "If you can see an area schedule or table but the numbers are too small or blurry to read with certainty, set confidence to 'unclear' and describe what you saw in reasoning. Never guess a number — unclear is better than a wrong value.\n"
-    "- For sqft_detail: Extract a full SQFT breakdown from any area schedule, project statistics block, or floor plan.\n"
-    "  total: The total under-roof area including all structures, conditioned and unconditioned.\n"
-    "  conditioned: Heated/livable area only (exclude garage, unheated spaces, porches, decks).\n"
-    "  unconditioned: Garage, unheated basement, storage, shop, barn — any area that is not heated living space.\n"
-    "  garage: Garage square footage specifically, if broken out.\n"
-    "  floors: One entry per floor level found (e.g. Main Floor: 2,662 / Second Floor: 1,291 / Basement: 2,620). Include whether each floor is conditioned. Format: {\"label\": \"Main Floor\", \"sqft\": 2662, \"conditioned\": true}.\n"
-    "  structures: If the plan shows multiple separate buildings (e.g. main house + detached garage + shop), list each as a separate structure with its label and sqft. Format: {\"label\": \"Main House\", \"sqft\": 2400}.\n"
-    "  line_items: Copy every row from any area schedule or project statistics table verbatim — name and sqft value. Format: {\"name\": \"Main Floor Heated\", \"sqft\": 2372.3}. This is the raw source data.\n"
-    "  If no breakdown is available, leave arrays empty and set total/conditioned/unconditioned to not_found.\n"
-    "- For ridge_count: Count every visible ridge line on the roof framing or roof plan. "
-    "A ridge is a horizontal peak line where two roof slopes meet. Count each distinct ridge line as 1, "
-    "including main ridges and any secondary ridges from wings, additions, or offsets. "
-    "If you can see ridge lines but the number is not labeled, count them visually and report that count as 'inferred'. "
-    "Do not return not_found if ridge lines are visible — always attempt a visual count.\n"
-    "- For valley_count: If the roof framing plan clearly shows no valleys, set value to 0 and confidence to extracted. "
-    "A value of 0 is a valid finding, not a missing value.\n"
-    "- For overhang_depth: If elevations clearly show no overhang or a flush fascia, set value to 0 and confidence to extracted. "
-    "Only use not_found if the pages were insufficient to determine whether an overhang exists.\n"
-    "- For footprint_shape: Classify the building footprint as one of: rectangular, L-shape, T-shape, U-shape, irregular. Look at the floor plan or roof plan view. If the building has a simple rectangle with no offsets or wings, use rectangular. If it has one offset wing, use L-shape. If it has two offset wings, use T-shape. If it wraps around a courtyard, use U-shape. Otherwise use irregular.\n"
-    "- For overall_span: The widest single truss span in the project — the largest clear-span dimension across the building width. Look for the widest dimension on the floor plan or framing plan, measured perpendicular to the ridge. Report in feet. If multiple spans exist, report the largest.\n"
-    "- For truss_type: If the roof is clearly stick-framed with no trusses, set value to none and confidence to extracted. "
-    "Only use not_found if the framing system could not be determined.\n"
-    "- For rooms: The 'rooms' object contains bedrooms, bathrooms, kitchens, and garages. "
-    "For each room type, count all instances across all floors. "
-    "For total_sqft, first look for a labeled total. If no total is labeled, calculate it by measuring or reading "
-    "the individual room dimensions visible on the floor plan and multiplying length x width for each room of that type, "
-    "then summing them. Show your math in the reasoning field — list each room with its dimensions and square footage. "
-    "If only some rooms have readable dimensions, sum what is available and note which are missing. "
-    "If room labels are visible but no dimensions are legible at all, set total_sqft to null and explain in reasoning. "
-    "Confidence: extracted if total comes directly from a label, inferred if calculated from dimensions, "
-    "unclear if dimensions appear present but were not legible, not_found if that room type is not visible at all. "
-    "If the building type is a garage, barn, or shop and a room type clearly does not exist in the structure, "
-    "set count to 0 and confidence to extracted rather than not_found.\n\n"
-    "Return ONLY valid JSON matching this exact structure:\n"
+    "Extract the following fields from these construction plan pages. For each field, provide value, "
+    "confidence (extracted|inferred|unclear|not_found), reasoning (1-2 sentences), and source_page.\n\n"
+    "Field guidance:\n"
+    "- building_type: single_family, garage, barn, shop, duplex, multi_family, commercial, addition, or unknown. "
+    "For garage/barn/shop, set room counts to 0 with confidence=extracted.\n"
+    "- square_footage: MOST IMPORTANT. Search all pages for 'Total Square Feet', 'Total Living Area', 'Livable SF', "
+    "'Conditioned Space', area schedules. Priority: (1) explicit labeled total, (2) sum conditioned rows from schedule, "
+    "(3) calculate from floor plan dimensions. Return conditioned total. Never guess — use 'unclear' if legibility is poor.\n"
+    "- sqft_detail: Full breakdown — total (all under-roof), conditioned (heated/livable only), unconditioned, garage. "
+    "floors: [{\"label\": \"Main Floor\", \"sqft\": 2662, \"conditioned\": true}]. "
+    "structures: [{\"label\": \"Main House\", \"sqft\": 2400}]. "
+    "line_items: copy every area schedule row verbatim [{\"name\": \"...\", \"sqft\": ...}].\n"
+    "- ridge_count: Count visible ridge lines on roof/framing plan. Always attempt visual count — never not_found if ridges visible.\n"
+    "- valley_count: 0 is valid (confidence=extracted) if no valleys visible.\n"
+    "- overhang_depth: 0 with extracted if flush fascia/no overhang. not_found only if indeterminate.\n"
+    "- footprint_shape: rectangular, L-shape, T-shape, U-shape, or irregular.\n"
+    "- overall_span: Widest truss span perpendicular to ridge, in feet.\n"
+    "- truss_type: Set to 'none' with extracted if stick-framed. not_found only if framing system indeterminate.\n"
+    "- rooms (bedrooms, bathrooms, kitchens, garages): Count all instances across floors. "
+    "For total_sqft, calculate from dimensions if no labeled total — show math in reasoning.\n\n"
+    "Return ONLY valid JSON matching this structure:\n"
     f"{json.dumps(EXTRACTION_FIELDS, indent=2)}\n\n"
-    "For roof_pitch and notes, the value should be an array. "
-    "For all other fields, the value should be a string or number or null."
+    "roof_pitch and notes values are arrays. All other values are string, number, or null."
 )
 
 
@@ -368,13 +340,40 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
 
     t_api_start = time.time()
     client = anthropic.Anthropic(timeout=600.0)
-    resp = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=8192,
-        messages=[{"role": "user", "content": content}],
-    )
+    primary_model = "claude-sonnet-4-20250514"
+    fallback_model = "claude-haiku-4-5-20251001"
+    model_used = primary_model
+    try:
+        resp = client.messages.create(
+            model=primary_model,
+            max_tokens=8192,
+            messages=[{"role": "user", "content": content}],
+        )
+    except anthropic.APIStatusError as e:
+        if e.status_code == 529:
+            logger.warning("extract_fields: 529 Overloaded on %s — retrying in 2s", primary_model)
+            time.sleep(2)
+            try:
+                resp = client.messages.create(
+                    model=primary_model,
+                    max_tokens=8192,
+                    messages=[{"role": "user", "content": content}],
+                )
+            except anthropic.APIStatusError as e2:
+                if e2.status_code == 529:
+                    logger.warning("extract_fields: 529 again — falling back to %s", fallback_model)
+                    model_used = fallback_model
+                    resp = client.messages.create(
+                        model=fallback_model,
+                        max_tokens=8192,
+                        messages=[{"role": "user", "content": content}],
+                    )
+                else:
+                    raise
+        else:
+            raise
     t_api_end = time.time()
-    logger.info("extract_fields: Claude API call took %.1fs", t_api_end - t_api_start)
+    logger.info("extract_fields: %s API call took %.1fs", model_used, t_api_end - t_api_start)
 
     raw = resp.content[0].text
     _save_debug_log(filename, "pass2_extract", raw)
