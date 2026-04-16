@@ -49,6 +49,8 @@ EXTRACTION_FIELDS = {
     "overhang_depth": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "ceiling_height": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "truss_type": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    "truss_surface_area": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
+    "roof_volume": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "porch_or_addition": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "footprint_shape": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
     "overall_span": {"value": None, "confidence": "not_found", "reasoning": None, "source_page": None},
@@ -272,6 +274,28 @@ DEFAULT_EXTRACTION_PROMPT = (
     "- footprint_shape: rectangular, L-shape, T-shape, U-shape, or irregular.\n"
     "- overall_span: Widest truss span perpendicular to ridge, in feet.\n"
     "- truss_type: Set to 'none' with extracted if stick-framed. not_found only if framing system indeterminate.\n"
+    "- truss_surface_area: Look for truss design drawings, elevation views, truss schedules, or specification sheets that "
+    "show individual truss surface area calculations. Check title blocks, truss manufacturer specs, or material takeoff "
+    "sheets for pre-calculated front face square footage values. If no total is explicitly labeled, calculate it from "
+    "visible truss dimensions: identify the truss span (heel-to-heel), pitch ratio (e.g., 6/12, 8/12), and heel height "
+    "from truss elevation drawings or detail sections. Calculate surface area using the truss profile geometry "
+    "(span × pitch rise factor + heel adjustments). In the reasoning field, list each truss type with its span, pitch, "
+    "heel height, and calculated SF. Exclude overhangs beyond heel points and filler trusses. If multiple truss types "
+    "exist, calculate each separately and list individually. Sum all trusses if a project total is needed. If calculated "
+    "from dimensions rather than a labeled value, set confidence to inferred. Do not return not_found if truss dimensions "
+    "and pitch are visible — always attempt a calculation. Example: '20'-0\" span, 6/12 pitch, 12\" heel = 70 SF per truss.'\n"
+    "- roof_volume: Look for roof framing plans, truss layout drawings, volume calculations in specification sheets, "
+    "title blocks, or material takeoff summaries for pre-calculated roof volume values (typically in cubic feet). "
+    "If no total is explicitly labeled, calculate it by: (1) identifying all truss types and their cross-sectional "
+    "profiles from elevation views, (2) measuring truss spacing from framing plans (typically 24\" O.C.), "
+    "(3) calculating volume per truss as (truss cross-sectional area × span × spacing), (4) multiplying by quantity of "
+    "each truss type, (5) summing across all trusses in the project. In the reasoning field, list each truss type, "
+    "quantity, dimensions, spacing, and calculated volume, then show the sum. Account for: attic space within truss "
+    "profiles, gaps between trusses, overframing conditions, valley/hip intersections, stick-framed roof sections, "
+    "and multi-level roof structures. Exclude: non-structural elements, overhangs beyond heel points, garage volumes "
+    "unless part of conditioned space, and non-roof volumes. If multiple roof levels or wings exist, calculate each "
+    "separately and sum. If calculated from dimensions rather than labeled, set confidence to inferred. Do not return "
+    "not_found if truss layouts, profiles, and spacing are visible — always attempt a calculation.\n"
     "- rooms (bedrooms, bathrooms, kitchens, garages): Count all instances across floors. "
     "For total_sqft, calculate from dimensions if no labeled total — show math in reasoning.\n\n"
     "Return ONLY valid JSON matching this structure:\n"
@@ -388,13 +412,19 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
 
     extracted = json.loads(text)
 
-    # Merge with defaults so every field is present
-    result = {}
-    for key, default in EXTRACTION_FIELDS.items():
-        if key in extracted:
-            result[key] = extracted[key]
-        else:
-            result[key] = default
+    # When a custom prompt is used, return Claude's JSON as-is so that user-defined
+    # fields aren't silently dropped by the EXTRACTION_FIELDS schema filter.
+    is_custom_prompt = prompt_text is not None and prompt_text != DEFAULT_EXTRACTION_PROMPT
+    if is_custom_prompt:
+        result = extracted
+    else:
+        # Standard scan — merge with defaults so every schema field is present
+        result = {}
+        for key, default in EXTRACTION_FIELDS.items():
+            if key in extracted:
+                result[key] = extracted[key]
+            else:
+                result[key] = default
 
     mem_end = _mem_mb()
     logger.info("extract_fields: total %.1fs, %d pages, RAM: %.0fMB (peak delta: +%.0fMB)",

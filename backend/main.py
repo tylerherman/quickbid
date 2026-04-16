@@ -200,6 +200,7 @@ def _run_extraction(job_id: str, upload_id: str, info: dict, selections: list, p
             info["path"], info["filename"], selections,
             prompt_text=prompt_text,
         )
+        is_custom = prompt_text is not None and prompt_text != scanner.DEFAULT_EXTRACTION_PROMPT
         _write_job(job_id, {
             "status": "complete",
             "result": {
@@ -207,6 +208,7 @@ def _run_extraction(job_id: str, upload_id: str, info: dict, selections: list, p
                 "filename": info["filename"],
                 "fields": result,
                 "pages_scanned": selections,
+                "is_custom_prompt": is_custom,
             },
             "error": None,
         })

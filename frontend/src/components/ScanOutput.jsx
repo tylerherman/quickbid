@@ -14,11 +14,25 @@ const FIELD_LABELS = {
   overhang_depth: "Overhang Depth",
   ceiling_height: "Ceiling Height",
   truss_type: "Truss Type",
+  truss_surface_area: "Truss Surface Area",
+  roof_volume: "Roof Volume",
   porch_or_addition: "Porch / Addition",
   footprint_shape: "Footprint Shape",
   overall_span: "Overall Span",
   notes: "Notes",
 };
+
+const ROOF_FIELD_ORDER = [
+  "roof_system_type",
+  "roof_pitch",
+  "ridge_count",
+  "valley_count",
+  "overhang_depth",
+  "truss_type",
+  "truss_surface_area",
+  "roof_volume",
+];
+const ROOF_FIELD_SET = new Set(ROOF_FIELD_ORDER);
 
 const formatSqft = (v) => {
   if (v === null || v === undefined || v === "") return null;
@@ -37,6 +51,7 @@ const ROOM_LABELS = {
 };
 
 export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, onSaved, readOnly = false, onFieldsChange, bdft: bdftProp, onBdftChange, bdftHighlight = false }) {
+  const isCustomPrompt = !!data?.is_custom_prompt;
   const [fields, setFields] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(null);
@@ -115,17 +130,143 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
     });
   };
 
-  // Confidence counting — include rooms sub-fields
-  const flatEntries = Object.entries(fields)
-    .filter(([k]) => k !== "rooms")
-    .map(([, v]) => v);
+  // Confidence counting — include rooms sub-fields. For custom prompts, count any
+  // returned object that happens to carry a `confidence` field; skip everything else.
+  const flatEntries = [];
+  Object.entries(fields).forEach(([k, v]) => {
+    if (k === "rooms") return;
+    if (v && typeof v === "object" && "confidence" in v) flatEntries.push(v);
+  });
   const rooms = fields.rooms || {};
-  Object.values(rooms).forEach((r) => flatEntries.push(r));
-  const total = flatEntries.length;
+  Object.values(rooms).forEach((r) => {
+    if (r && typeof r === "object" && "confidence" in r) flatEntries.push(r);
+  });
+  const total = flatEntries.length || 1;
   const counts = { extracted: 0, inferred: 0, unclear: 0, not_found: 0 };
   flatEntries.forEach((e) => {
     if (counts[e.confidence] !== undefined) counts[e.confidence]++;
   });
+
+  const renderFieldCard = (key, field) => {
+    const isArray = ARRAY_FIELDS.includes(key);
+    const displayValue = isArray
+      ? Array.isArray(field.value)
+        ? field.value.join(", ")
+        : field.value || ""
+      : field.value ?? "";
+
+    return (
+      <div
+        key={key}
+        className={`p-4 ${
+          field.confidence === "not_found" ? "bg-red-50" : ""
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <div className="w-36 shrink-0">
+            <label className="text-sm font-medium text-gray-700">
+              {FIELD_LABELS[key] || key}
+            </label>
+            <div className="mt-1">
+              <ConfidenceBadge confidence={field.confidence} />
+            </div>
+          </div>
+          <div className="flex-1">
+            {key === "notes" ? (
+              <textarea
+                value={displayValue}
+                onChange={(e) => {
+                  const val = e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  updateValue(key, val);
+                }}
+                rows={2}
+                className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                placeholder="Comma-separated notes..."
+              />
+            ) : (
+              <input
+                type="text"
+                value={displayValue}
+                onChange={(e) => {
+                  if (isArray) {
+                    const val = e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean);
+                    updateValue(key, val);
+                  } else {
+                    updateValue(key, e.target.value);
+                  }
+                }}
+                className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                placeholder={
+                  field.confidence === "not_found"
+                    ? "Enter value..."
+                    : ""
+                }
+              />
+            )}
+            {key === "square_footage" && (
+              <div className="mt-2 flex gap-2">
+                <div className="flex-1">
+                  <label className="text-[11px] text-gray-400 uppercase tracking-wide">
+                    Conditioned
+                  </label>
+                  <input
+                    type="text"
+                    value={fields.sqft_detail?.conditioned?.value ?? ""}
+                    onChange={(e) => updateSqftDetail("conditioned", e.target.value || null)}
+                    className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                    placeholder="-"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[11px] text-gray-400 uppercase tracking-wide">
+                    Unconditioned
+                  </label>
+                  <input
+                    type="text"
+                    value={fields.sqft_detail?.unconditioned?.value ?? fields.sqft_detail?.garage?.value ?? ""}
+                    onChange={(e) => updateSqftDetail("unconditioned", e.target.value || null)}
+                    className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                    placeholder="-"
+                  />
+                </div>
+              </div>
+            )}
+            {field.reasoning && (
+              <div className="mt-1.5">
+                <p className="text-sm text-gray-500">
+                  {field.reasoning}
+                </p>
+                {field.source_page && (
+                  <p className="text-sm text-gray-400 mt-0.5">
+                    <span className="font-medium">Source:</span>{" "}
+                    {field.source_page}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="w-24 shrink-0">
+            <select
+              value={field.confidence}
+              onChange={(e) => updateConfidence(key, e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              <option value="extracted">Extracted</option>
+              <option value="inferred">Inferred</option>
+              <option value="unclear">Unclear</option>
+              <option value="not_found">Not Found</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const handleSaveToDb = async () => {
     setSavingToDb(true);
@@ -236,131 +377,33 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
       {/* Fields */}
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="divide-y divide-gray-100">
-          {Object.entries(fields)
-            .filter(([key]) => key !== "rooms" && key !== "sqft_detail")
-            .map(([key, field]) => {
-              const isArray = ARRAY_FIELDS.includes(key);
-              const displayValue = isArray
-                ? Array.isArray(field.value)
-                  ? field.value.join(", ")
-                  : field.value || ""
-                : field.value ?? "";
+          {!isCustomPrompt && Object.entries(fields)
+            .filter(([key, field]) =>
+              key !== "rooms" &&
+              key !== "sqft_detail" &&
+              !ROOF_FIELD_SET.has(key) &&
+              field && typeof field === "object" && "confidence" in field
+            )
+            .map(([key, field]) => renderFieldCard(key, field))}
 
-              return (
-                <div
-                  key={key}
-                  className={`p-4 ${
-                    field.confidence === "not_found" ? "bg-red-50" : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-36 shrink-0">
-                      <label className="text-sm font-medium text-gray-700">
-                        {FIELD_LABELS[key] || key}
-                      </label>
-                      <div className="mt-1">
-                        <ConfidenceBadge confidence={field.confidence} />
-                      </div>
-                    </div>
-                    <div className="flex-1">
-                      {key === "notes" ? (
-                        <textarea
-                          value={displayValue}
-                          onChange={(e) => {
-                            const val = e.target.value
-                              .split(",")
-                              .map((s) => s.trim())
-                              .filter(Boolean);
-                            updateValue(key, val);
-                          }}
-                          rows={2}
-                          className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                          placeholder="Comma-separated notes..."
-                        />
-                      ) : (
-                        <input
-                          type="text"
-                          value={displayValue}
-                          onChange={(e) => {
-                            if (isArray) {
-                              const val = e.target.value
-                                .split(",")
-                                .map((s) => s.trim())
-                                .filter(Boolean);
-                              updateValue(key, val);
-                            } else {
-                              updateValue(key, e.target.value);
-                            }
-                          }}
-                          className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                          placeholder={
-                            field.confidence === "not_found"
-                              ? "Enter value..."
-                              : ""
-                          }
-                        />
-                      )}
-                      {key === "square_footage" && (
-                        <div className="mt-2 flex gap-2">
-                          <div className="flex-1">
-                            <label className="text-[11px] text-gray-400 uppercase tracking-wide">
-                              Conditioned
-                            </label>
-                            <input
-                              type="text"
-                              value={fields.sqft_detail?.conditioned?.value ?? ""}
-                              onChange={(e) => updateSqftDetail("conditioned", e.target.value || null)}
-                              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                              placeholder="-"
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <label className="text-[11px] text-gray-400 uppercase tracking-wide">
-                              Unconditioned
-                            </label>
-                            <input
-                              type="text"
-                              value={fields.sqft_detail?.unconditioned?.value ?? fields.sqft_detail?.garage?.value ?? ""}
-                              onChange={(e) => updateSqftDetail("unconditioned", e.target.value || null)}
-                              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                              placeholder="-"
-                            />
-                          </div>
-                        </div>
-                      )}
-                      {field.reasoning && (
-                        <div className="mt-1.5">
-                          <p className="text-sm text-gray-500">
-                            {field.reasoning}
-                          </p>
-                          {field.source_page && (
-                            <p className="text-sm text-gray-400 mt-0.5">
-                              <span className="font-medium">Source:</span>{" "}
-                              {field.source_page}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="w-24 shrink-0">
-                      <select
-                        value={field.confidence}
-                        onChange={(e) => updateConfidence(key, e.target.value)}
-                        className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                      >
-                        <option value="extracted">Extracted</option>
-                        <option value="inferred">Inferred</option>
-                        <option value="unclear">Unclear</option>
-                        <option value="not_found">Not Found</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          {/* Roof grouped section */}
+          {!isCustomPrompt && ROOF_FIELD_ORDER.some((k) => fields[k]) && (
+            <div className="p-4">
+              <label className="text-sm font-semibold text-gray-900 mb-3 block">
+                Roof
+              </label>
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+                {ROOF_FIELD_ORDER
+                  .filter((key) =>
+                    fields[key] && typeof fields[key] === "object" && "confidence" in fields[key]
+                  )
+                  .map((key) => renderFieldCard(key, fields[key]))}
+              </div>
+            </div>
+          )}
 
           {/* Rooms grouped card */}
-          {fields.rooms && (
+          {!isCustomPrompt && fields.rooms && (
             <div className="p-4">
               <label className="text-sm font-semibold text-gray-900 mb-3 block">
                 Rooms
@@ -441,6 +484,79 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Custom Prompt Output — shown when scan used a non-default prompt */}
+          {isCustomPrompt && (
+            <div className="p-4">
+              <label className="text-sm font-semibold text-gray-900 mb-1 block">
+                Custom Prompt Output
+              </label>
+              <p className="text-xs text-gray-400 mb-3">
+                Raw fields returned by your custom extraction prompt.
+              </p>
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+                {Object.entries(fields).map(([key, val]) => {
+                  const isObj = val && typeof val === "object" && !Array.isArray(val);
+                  const hasField = isObj && "value" in val;
+                  const displayValue = hasField
+                    ? (Array.isArray(val.value) ? val.value.join(", ") : (val.value ?? ""))
+                    : Array.isArray(val)
+                      ? val.join(", ")
+                      : isObj
+                        ? JSON.stringify(val, null, 2)
+                        : (val ?? "");
+                  const confidence = hasField ? val.confidence : null;
+                  const reasoning = hasField ? val.reasoning : null;
+                  const sourcePage = hasField ? val.source_page : null;
+                  const isMultiline = typeof displayValue === "string" && displayValue.includes("\n");
+
+                  return (
+                    <div
+                      key={key}
+                      className={`p-3 ${confidence === "not_found" ? "bg-red-50" : ""}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-36 shrink-0">
+                          <label className="text-sm font-medium text-gray-700 break-words">
+                            {key}
+                          </label>
+                          {confidence && (
+                            <div className="mt-1">
+                              <ConfidenceBadge confidence={confidence} />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {isMultiline ? (
+                            <pre className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-xs font-mono bg-gray-50 whitespace-pre-wrap break-words">
+                              {String(displayValue)}
+                            </pre>
+                          ) : (
+                            <input
+                              type="text"
+                              value={String(displayValue)}
+                              readOnly
+                              className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm bg-gray-50 focus:outline-none"
+                            />
+                          )}
+                          {reasoning && (
+                            <div className="mt-1.5">
+                              <p className="text-sm text-gray-500">{reasoning}</p>
+                              {sourcePage && (
+                                <p className="text-sm text-gray-400 mt-0.5">
+                                  <span className="font-medium">Source:</span> {sourcePage}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

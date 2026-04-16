@@ -26,6 +26,18 @@ export default function App() {
   };
   const location = useLocation();
 
+  // __BUILD_TIME__ is replaced at build time by vite.config.js
+  const deployedLabel = (() => {
+    try {
+      const d = new Date(__BUILD_TIME__);
+      const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toLowerCase().replace(" ", "");
+      return `deployed ${date} ${time}`;
+    } catch {
+      return "";
+    }
+  })();
+
   useEffect(() => {
     api.get("/default-prompt").then(({ data }) => {
       setDefaultPrompt(data.prompt);
@@ -53,7 +65,7 @@ export default function App() {
           <Link to="/" className="text-lg font-bold text-gray-900 hover:text-gray-700">
             Quick Bid Scanner
           </Link>
-          <span className="text-xs text-gray-400 ml-3">deployed Apr 13, 2026 10:30am</span>
+          <span className="text-xs text-gray-400 ml-3">{deployedLabel}</span>
         </div>
         <Link
           to="/saved-scans"
