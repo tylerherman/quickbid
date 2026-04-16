@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -304,6 +305,46 @@ DEFAULT_EXTRACTION_PROMPT = (
 )
 
 
+# Shorter per-field instructions used as a fallback when the page count pushes the
+# request payload close to model limits. Keeping these handy as a separate dict so
+# the verbose default guidance can stay intact above.
+CONDENSED_FIELD_INSTRUCTIONS = {
+    "truss_surface_area": (
+        "Calculate truss surface area from truss drawings. Use span, pitch, and heel "
+        "height if not explicitly labeled. Set confidence to inferred if calculated. "
+        "Do not return not_found if dimensions are visible."
+    ),
+    "roof_volume": (
+        "Calculate roof volume from truss layout, spacing, and cross-sectional profiles. "
+        "Set confidence to inferred if calculated. Do not return not_found if truss "
+        "layouts and spacing are visible."
+    ),
+}
+
+
+def get_prompt_for_page_count(page_count: int, base_prompt: str) -> str:
+    """Swap in condensed field instructions when many pages are scanned.
+
+    For page_count > 8 the verbose truss_surface_area / roof_volume blocks are
+    replaced with shorter equivalents to keep the prompt + image payload under
+    the model's context budget. For smaller scans the base prompt is returned
+    unchanged. Custom prompts that don't include the matching bullet markers
+    are also returned unchanged.
+    """
+    if page_count <= 8:
+        return base_prompt
+    out = base_prompt
+    for field, short in CONDENSED_FIELD_INSTRUCTIONS.items():
+        # Match "- <field>: ..." up to the start of the next "- " bullet or the
+        # closing "Return ONLY ..." section.
+        pattern = re.compile(
+            rf"- {re.escape(field)}:.*?(?=\n- |\nReturn ONLY)",
+            re.DOTALL,
+        )
+        out = pattern.sub(f"- {field}: {short}", out)
+    return out
+
+
 def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], prompt_text: str | None = None) -> dict:
     t0 = time.time()
     mem_start = _mem_mb()
@@ -329,7 +370,10 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
 
     logger.info("extract_fields: %d pages, starting (RAM: %.0fMB)", len(page_numbers), mem_start)
 
-    prompt = prompt_text if prompt_text else DEFAULT_EXTRACTION_PROMPT
+    base_prompt = prompt_text if prompt_text else DEFAULT_EXTRACTION_PROMPT
+    prompt = get_prompt_for_page_count(len(page_numbers), base_prompt)
+    if prompt is not base_prompt:
+        logger.info("extract_fields: using condensed prompt for %d pages", len(page_numbers))
 
     content = []
     content.append({"type": "text", "text": prompt})
@@ -402,7 +446,21 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
     raw = resp.content[0].text
     _save_debug_log(filename, "pass2_extract", raw)
 
-    text = raw.strip()
+    # Visibility into Claude's raw response in Render logs — surfaces silent
+    # truncations, empty payloads, and prose-wrapped JSON before parsing.
+    logger.debug(
+        "extract_fields: raw response — len=%d, head=%r",
+        len(raw or ""),
+        (raw or "")[:200],
+    )
+
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError(
+            "Claude returned an empty response. The document may be too large "
+            "or the prompt too long. Try selecting fewer pages."
+        )
+
     if text.startswith("```"):
         lines = text.split("\n")
         lines = lines[1:]
@@ -410,7 +468,23 @@ def extract_fields(pdf_path: str, filename: str, page_selections: list[dict], pr
             lines = lines[:-1]
         text = "\n".join(lines)
 
-    extracted = json.loads(text)
+    try:
+        extracted = json.loads(text)
+    except json.JSONDecodeError:
+        # Claude sometimes wraps the JSON in prose. Pull out the first {...} block
+        # (greedy match grabs nested objects) and try again before giving up.
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                extracted = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                raise ValueError(
+                    f"Claude returned a non-JSON response. Raw response (first 500 chars): {raw[:500]}"
+                )
+        else:
+            raise ValueError(
+                f"Claude returned a non-JSON response. Raw response (first 500 chars): {raw[:500]}"
+            )
 
     # When a custom prompt is used, return Claude's JSON as-is so that user-defined
     # fields aren't silently dropped by the EXTRACTION_FIELDS schema filter.

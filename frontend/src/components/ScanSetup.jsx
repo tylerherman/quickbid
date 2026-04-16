@@ -3,6 +3,22 @@ import api from "../api";
 
 const LS_KEY = "quickbid_saved_prompts";
 
+// Map backend scan errors to a user-friendly message. Falls back to the
+// existing generic copy when no specific signal is present.
+function formatScanErrorMessage(detail) {
+  const msg = (detail || "").toLowerCase();
+  if (msg.includes("empty response")) {
+    return "Scan failed: Claude returned no data. Try selecting fewer pages or use a smaller PDF.";
+  }
+  if (msg.includes("too large") || msg.includes("large file")) {
+    return "Scan failed: File may be too large. Try selecting only the most relevant pages (framing plan, roof plan, elevations).";
+  }
+  if (detail) {
+    return `Scan failed: ${detail}. This may be due to a large file — try a smaller file or contact support.`;
+  }
+  return "Scan failed: Server returned an empty response. The file may be too large to process.";
+}
+
 function loadSavedPrompts() {
   try {
     return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
@@ -193,8 +209,7 @@ export default function ScanSetup({
                 setIsOverloaded(true);
                 setError("AI capacity is limited right now. We've queued a retry...");
               } else {
-                const errMsg = status.error || "Unknown error";
-                setError(`Scan failed: ${errMsg}. This may be due to a large file — try a smaller file or contact support.`);
+                setError(formatScanErrorMessage(status.error || "Unknown error"));
               }
               setLastFailed(true);
               setScanning(false);
@@ -219,12 +234,7 @@ export default function ScanSetup({
       await poll();
     } catch (err) {
       console.error("Scan error:", err.response?.data || err);
-      const detail = err.response?.data?.detail;
-      if (detail) {
-        setError(`Scan failed: ${detail}. This may be due to a large file — try a smaller file or contact support.`);
-      } else {
-        setError("Scan failed: Server returned an empty response. The file may be too large to process.");
-      }
+      setError(formatScanErrorMessage(err.response?.data?.detail));
       setScanning(false);
       setScanStatus("");
     }
