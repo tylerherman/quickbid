@@ -3,6 +3,52 @@ import api from "../api";
 
 const LS_KEY = "quickbid_saved_prompts";
 
+const PROMPT_CHAR_LIMIT = 4000;
+const PROMPT_CHAR_WARN = 3000;
+
+// Lightweight pre-flight checks on the user's extraction prompt. Returns an
+// array of {level: "error"|"warning", message} entries. None of these block
+// the scan — the user can always proceed with "Scan anyway".
+function validatePrompt(promptText) {
+  const warnings = [];
+  const text = promptText || "";
+
+  if (!text.trim()) {
+    warnings.push({ level: "error", message: "Prompt is empty. Using default prompt." });
+    // No further checks make sense on an empty prompt
+    return warnings;
+  }
+  if (text.length > PROMPT_CHAR_LIMIT) {
+    warnings.push({
+      level: "warning",
+      message: "Prompt is very long and may cause extraction to fail. Consider shortening it.",
+    });
+  }
+  if (!/json/i.test(text)) {
+    warnings.push({
+      level: "warning",
+      message: "Prompt may not return structured data. Make sure to ask Claude to return JSON.",
+    });
+  }
+  // "do not ... return" within ~10 words of each other, more than twice.
+  // Uses a lazy quantifier so successive matches don't get swallowed by the first.
+  const conflictRe = /\bdo not\b(?:\W+\w+){0,10}?\W+\breturn\b/gi;
+  const conflicts = text.match(conflictRe) || [];
+  if (conflicts.length > 2) {
+    warnings.push({
+      level: "warning",
+      message: "Prompt may contain conflicting instructions.",
+    });
+  }
+  if (text.includes("{{") || text.includes("}}")) {
+    warnings.push({
+      level: "warning",
+      message: "Prompt appears to contain unfilled template placeholders.",
+    });
+  }
+  return warnings;
+}
+
 // Map backend scan errors to a user-friendly message. Falls back to the
 // existing generic copy when no specific signal is present.
 function formatScanErrorMessage(detail) {
@@ -55,8 +101,27 @@ export default function ScanSetup({
   const [saveNameInput, setSaveNameInput] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [resetConfirmed, setResetConfirmed] = useState(false);
   const inputRef = useRef();
   const dropdownRef = useRef();
+
+  const isDefaultPrompt = !!defaultPrompt && promptText === defaultPrompt;
+  const promptWarnings = validatePrompt(promptText);
+  const hasWarnings = promptWarnings.length > 0;
+  const charCount = (promptText || "").length;
+  const charCountColor =
+    charCount >= PROMPT_CHAR_LIMIT
+      ? "text-red-400"
+      : charCount >= PROMPT_CHAR_WARN
+        ? "text-yellow-400"
+        : "text-gray-500";
+
+  const handleResetPrompt = () => {
+    if (!defaultPrompt || isDefaultPrompt) return;
+    setPromptText(defaultPrompt);
+    setResetConfirmed(true);
+    setTimeout(() => setResetConfirmed(false), 1500);
+  };
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -379,9 +444,26 @@ export default function ScanSetup({
 
       {/* Prompt editor */}
       <div className="flex-1 flex flex-col min-h-0 p-4">
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Extraction Prompt
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            Extraction Prompt
+          </label>
+          <button
+            type="button"
+            onClick={handleResetPrompt}
+            disabled={!defaultPrompt || isDefaultPrompt}
+            className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
+              resetConfirmed
+                ? "border-green-300 text-green-600 bg-green-50"
+                : !defaultPrompt || isDefaultPrompt
+                  ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+            }`}
+            title={isDefaultPrompt ? "Already at default" : "Restore the original prompt"}
+          >
+            {resetConfirmed ? "✓ Reset" : "Reset to Default"}
+          </button>
+        </div>
 
         {/* Saved prompts toolbar */}
         <div className="flex items-center gap-2 mb-2">
@@ -443,12 +525,38 @@ export default function ScanSetup({
           </button>
         </div>
 
-        <textarea
-          value={promptText}
-          onChange={(e) => setPromptText(e.target.value)}
-          className="flex-1 min-h-0 w-full bg-gray-900 text-gray-100 text-sm font-mono p-4 rounded-lg border border-gray-700 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent leading-relaxed"
-          spellCheck={false}
-        />
+        <div className="relative flex-1 min-h-0 flex">
+          <textarea
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            className="flex-1 min-h-0 w-full bg-gray-900 text-gray-100 text-sm font-mono p-4 pb-7 rounded-lg border border-gray-700 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent leading-relaxed"
+            spellCheck={false}
+          />
+          <div
+            className={`pointer-events-none absolute bottom-2 right-3 text-[11px] font-mono ${charCountColor}`}
+          >
+            {charCount.toLocaleString()} / {PROMPT_CHAR_LIMIT.toLocaleString()} chars
+          </div>
+        </div>
+
+        {/* Prompt validation warnings */}
+        {hasWarnings && (
+          <div className="mt-2 space-y-1.5">
+            {promptWarnings.map((w, i) => (
+              <div
+                key={i}
+                className={`flex items-start gap-2 text-xs px-2.5 py-1.5 rounded border ${
+                  w.level === "error"
+                    ? "bg-red-50 border-red-200 text-red-700"
+                    : "bg-yellow-50 border-yellow-200 text-yellow-800"
+                }`}
+              >
+                <span className="shrink-0">⚠</span>
+                <span>{w.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Output fields chips */}
         <div className="mt-3">
@@ -495,8 +603,8 @@ export default function ScanSetup({
           onClick={handleRunScan}
           disabled={!uploadResult || scanning || uploading}
           className={`w-full py-3 rounded-lg font-medium text-white transition-colors ${
-            lastFailed && !scanning && !uploading
-              ? "bg-blue-600 hover:bg-blue-700 border-2 border-orange-400"
+            (lastFailed || hasWarnings) && !scanning && !uploading
+              ? "bg-blue-600 hover:bg-blue-700 border-2 border-amber-400"
               : "bg-blue-600 hover:bg-blue-700 border-2 border-transparent"
           } disabled:bg-gray-300 disabled:cursor-not-allowed disabled:border-transparent`}
         >
@@ -548,6 +656,8 @@ export default function ScanSetup({
             </span>
           ) : lastFailed ? (
             "Retry Scan"
+          ) : hasWarnings ? (
+            "⚠ Scan anyway"
           ) : (
             "Run Scan"
           )}
