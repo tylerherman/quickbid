@@ -268,6 +268,34 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
     );
   };
 
+  // Serialize the in-memory fields object so the JSON export mirrors the UI:
+  // standard fields first, then a nested "roof" group, then rooms/sqft_detail.
+  // Custom prompts wrap everything under "custom_prompt_output".
+  const serializeFieldsForExport = (src, custom) => {
+    if (!src) return src;
+    if (custom) {
+      return { custom_prompt_output: { ...src } };
+    }
+    const out = {};
+    // Standard fields (in insertion order), excluding roof/rooms/sqft_detail
+    Object.entries(src).forEach(([key, val]) => {
+      if (key === "rooms" || key === "sqft_detail") return;
+      if (ROOF_FIELD_SET.has(key)) return;
+      out[key] = val;
+    });
+    // Roof group, in canonical order, only including keys that exist
+    const roofGroup = {};
+    ROOF_FIELD_ORDER.forEach((key) => {
+      if (key in src) roofGroup[key] = src[key];
+    });
+    if (Object.keys(roofGroup).length > 0) {
+      out.roof = roofGroup;
+    }
+    if ("rooms" in src) out.rooms = src.rooms;
+    if ("sqft_detail" in src) out.sqft_detail = src.sqft_detail;
+    return out;
+  };
+
   const handleSaveToDb = async () => {
     setSavingToDb(true);
     setError(null);
@@ -275,7 +303,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
       await api.post("/scans/save", {
         upload_id: uploadId || "",
         prompt_used: promptUsed || "",
-        extraction_fields: fields,
+        extraction_fields: serializeFieldsForExport(fields, isCustomPrompt),
         thumbnail_data: thumbnailData || [],
         bdft: bdft !== "" ? parseFloat(bdft) : null,
       });
@@ -294,7 +322,7 @@ export default function ScanOutput({ data, uploadId, promptUsed, thumbnailData, 
     try {
       const { data: result } = await api.post("/save", {
         upload_id: uploadId || "",
-        fields,
+        fields: serializeFieldsForExport(fields, isCustomPrompt),
       });
       setSaved(result);
     } catch (err) {

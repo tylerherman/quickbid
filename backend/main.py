@@ -50,6 +50,23 @@ JOBS_DIR.mkdir(parents=True, exist_ok=True)
 uploads: Dict[str, Dict] = {}
 
 
+def flatten_extraction_fields(fields: dict) -> dict:
+    """Flatten the UI-grouped extraction fields back to a flat schema for storage.
+
+    The frontend serializes roof-related fields under a nested "roof" key so the
+    JSON export mirrors the UI layout. The DB schema and matching/scoring logic
+    expect those keys at the top level — pull them up and drop the wrapper.
+    """
+    if not isinstance(fields, dict):
+        return fields
+    if "roof" not in fields or not isinstance(fields["roof"], dict):
+        return fields
+    out = {k: v for k, v in fields.items() if k != "roof"}
+    for k, v in fields["roof"].items():
+        out[k] = v
+    return out
+
+
 def _write_job(job_id: str, data: dict):
     path = JOBS_DIR / f"{job_id}.json"
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -354,7 +371,7 @@ async def save_scan_to_db(req: SaveScanRequest):
         scan_id = database.save_scan(
             filename=info["filename"],
             prompt_used=req.prompt_used,
-            extraction_fields=req.extraction_fields,
+            extraction_fields=flatten_extraction_fields(req.extraction_fields),
             pdf_path=info["path"],
             thumbnail_data=req.thumbnail_data or [],
             bdft=req.bdft,
@@ -425,7 +442,7 @@ async def update_scan(scan_id: str, req: UpdateScanRequest):
     if req.bdft is not None:
         updates["bdft"] = req.bdft
     if req.extraction_fields is not None:
-        updates["extraction_fields"] = req.extraction_fields
+        updates["extraction_fields"] = flatten_extraction_fields(req.extraction_fields)
     if not updates:
         raise HTTPException(400, "No fields to update")
     try:
